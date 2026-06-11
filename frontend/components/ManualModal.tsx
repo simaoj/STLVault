@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { X, Edit, Save } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -31,18 +31,6 @@ const ManualModal: React.FC<ManualModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  const autoResizeTextarea = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, []);
-
-  useEffect(() => {
-    if (mode === "edit") autoResizeTextarea();
-  }, [mode, draft, autoResizeTextarea]);
 
   useEffect(() => {
     if (!model) return;
@@ -129,7 +117,7 @@ const ManualModal: React.FC<ManualModalProps> = ({
         height: viewportHeight,
         transform: `translate(${visualViewport.offsetLeft}px, ${visualViewport.offsetTop}px)`,
       }}
-      onClick={onClose}
+      onClick={mode === "edit" ? undefined : onClose}
     >
       <div
         className="bg-vault-800 border border-vault-600 rounded-xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col w-full max-w-3xl"
@@ -194,12 +182,11 @@ const ManualModal: React.FC<ManualModalProps> = ({
           )}
           {!loading && mode === "edit" && (
             <textarea
-              ref={textareaRef}
               autoFocus
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="Write your manual in Markdown..."
-              className="min-h-[240px] w-full bg-vault-900 border border-vault-700 rounded-md p-3 text-slate-200 font-mono text-sm resize-none outline-none focus:border-blue-500 overflow-hidden"
+              className="flex-1 min-h-[240px] w-full bg-vault-900 border border-vault-700 rounded-md p-3 text-slate-200 font-mono text-sm resize-none outline-none focus:border-blue-500 overflow-y-auto"
             />
           )}
         </div>
