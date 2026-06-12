@@ -479,15 +479,6 @@ def replace_model_thumbnail(
 def get_model_manual(model_id: str):
     path = MANUAL_DIR / f"{model_id}.md"
     if not path.exists():
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE models SET manual=NULL WHERE id=? AND manual IS NOT NULL",
-            (model_id,),
-        )
-        if cur.rowcount > 0:
-            conn.commit()
-        conn.close()
         raise HTTPException(status_code=404, detail="Manual not found")
     return FileResponse(path, media_type="text/markdown")
 
