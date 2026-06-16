@@ -14,12 +14,13 @@
 
 **STLVault** is a containerized 3D Model library manager and organizer, designed specifically for 3D printing enthusiasts. It provides a clean, modern web interface to manage your growing collection of STL, STEP, and 3MF files.
 
-> **Note:** This project is currently in Beta. While the core functionality (importing, organizing, viewing) works, expect changes and improvements.
+> **Note:** This project is still in Beta. While the core functionality (importing, organizing, viewing) works, expect changes and improvements.
 
 ---
 
 ## ✨ Features
 
+- **📖 Manuals:** Include markdown manuals for every model, with github style compatibility.
 - **📂 Nestable Folders:** Organize your models into a deep hierarchy that makes sense to you.
 - **🪄 Open in Slicer:** Let's you open the model direclty in your slicer.
 - **🔗 URL Import:** Import multiple files from Printables URL, with granular file selection. (Only models URL)
@@ -54,6 +55,10 @@
 
 The recommended way to deploy STLVault is using **Docker Compose** or via a container management tool like **Portainer**.
 
+Replace the variables or create a .env file to let docker handle the injection.
+
+`An example .env file is in the section below.`
+
 ## Docker Compose with Images
 
 ```
@@ -63,6 +68,7 @@ services:
     pull_policy: build
     environment:
       - FILE_STORAGE=/app/uploads #DO NOT CHANGE, MODIFY THE BINDS
+      - MANUAL_STORAGE=/app/uploads/manuals #DO NOT CHANGE, MODIFY THE BINDS
       - DB_PATH=/app/data/data.db #DO NOT CHANGE, MODIFY THE BINDS
       - WEBUI_URL: "${APP_URL}"
     ports:
@@ -70,6 +76,7 @@ services:
     volumes:
       - YOUR_FOLDER_PATH:/app/uploads
       - YOUR_FOLDER_PATH:/app/data
+      - YOUR_FOLDER_PATH:/app/manuals #OPTIONAL
     restart: always
   stlvfrontend:
     image: moddroid94/stlvault-frontend:latest
@@ -143,31 +150,4 @@ The application requires two main volumes to persist data. If you are using the 
 
 - [x] Basic File Management (Upload, Move, Delete)
 - [x] 3D Viewer (STL, 3MF, STEP)
-- [x] Open in Slicer settings
-- [x] Thumbnails / 3D viewer for STEP
-- [x] Model import via Printables URL with interactive models selection.
-- [ ] Backend folder structure follows frontend
-- [ ] "All models" folder Pagination to speedup large collection first load.
-- [ ] Zip Import
-- [ ] Root folder Scan and import
-- [x] Generate thumbnail from 3D Preview (to fix bad oriented models or to choose a better angle)
-- [ ] Models Collections (to group models for projects or variants)
-- [ ] Multi-User with Authentication
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Since this project uses a standard React + FastAPI stack, it is easy to set up for development.
-
-1.  Fork the repository.
-2.  Create a feature branch (`git checkout -b feature/AmazingFeature`).
-3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-4.  Push to the branch (`git push origin feature/AmazingFeature`).
-5.  Open a Pull Request.
-
----
-
-## 📝 License
-
-[MIT License](LICENSE)
+- [ ] Storage Template for saving files orderly
