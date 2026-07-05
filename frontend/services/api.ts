@@ -11,10 +11,44 @@ if (localStorage.getItem("api-port-override")) {
 
 // --- API SERVICE ---
 
+// Wraps fetch to always send the session cookie and to notify the app when
+// a session has expired/is missing, so it can fall back to the login screen.
+export const authFetch = async (
+  input: string,
+  init: RequestInit = {},
+): Promise<Response> => {
+  const res = await fetch(input, { ...init, credentials: "include" });
+  if (res.status === 401) {
+    window.dispatchEvent(new Event("stlvault:unauthorized"));
+  }
+  return res;
+};
+
 export const api = {
+  // 0. AUTH
+  login: async (username: string, password: string): Promise<{ username: string }> => {
+    const res = await authFetch(`${API_BASE_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) throw new Error("Invalid username or password");
+    return res.json();
+  },
+
+  logout: async (): Promise<void> => {
+    await authFetch(`${API_BASE_URL}/auth/logout`, { method: "POST" });
+  },
+
+  getMe: async (): Promise<{ username: string }> => {
+    const res = await authFetch(`${API_BASE_URL}/auth/me`);
+    if (!res.ok) throw new Error("Not authenticated");
+    return res.json();
+  },
+
   // 1. GET Folders
   getFolders: async (): Promise<Folder[]> => {
-    const res = await fetch(`${API_BASE_URL}/folders`);
+    const res = await authFetch(`${API_BASE_URL}/folders`);
     if (!res.ok) throw new Error("Failed to fetch folders");
     return res.json();
   },
@@ -24,7 +58,7 @@ export const api = {
     name: string,
     parentId: string | null = null,
   ): Promise<Folder> => {
-    const res = await fetch(`${API_BASE_URL}/folders`, {
+    const res = await authFetch(`${API_BASE_URL}/folders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, parentId }),
@@ -35,7 +69,7 @@ export const api = {
 
   // 3. UPDATE Folder (Rename/Move)
   updateFolder: async (id: string, name: string): Promise<Folder> => {
-    const res = await fetch(`${API_BASE_URL}/folders/${id}`, {
+    const res = await authFetch(`${API_BASE_URL}/folders/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
@@ -46,7 +80,7 @@ export const api = {
 
   // 4. DELETE Folder
   deleteFolder: async (id: string): Promise<void> => {
-    const res = await fetch(`${API_BASE_URL}/folders/${id}`, {
+    const res = await authFetch(`${API_BASE_URL}/folders/${id}`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Delete failed");
@@ -55,7 +89,7 @@ export const api = {
   // 5. GET Models
   getModels: async (folderId?: string): Promise<STLModel[]> => {
     const query = folderId && folderId !== "all" ? `?folderId=${folderId}` : "";
-    const res = await fetch(`${API_BASE_URL}/models${query}`);
+    const res = await authFetch(`${API_BASE_URL}/models${query}`);
     if (!res.ok) throw new Error("Failed to fetch models");
     return res.json();
   },
@@ -73,7 +107,7 @@ export const api = {
     if (thumbnail) formData.append("thumbnail", thumbnail); // Send base64 thumbnail
     if (tags.length > 0) formData.append("tags", JSON.stringify(tags));
 
-    const res = await fetch(`${API_BASE_URL}/models/upload`, {
+    const res = await authFetch(`${API_BASE_URL}/models/upload`, {
       method: "POST",
       body: formData,
     });
@@ -87,7 +121,7 @@ export const api = {
     id: string,
     updates: Partial<STLModel>,
   ): Promise<STLModel> => {
-    const res = await fetch(`${API_BASE_URL}/models/${id}`, {
+    const res = await authFetch(`${API_BASE_URL}/models/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
@@ -100,7 +134,7 @@ export const api = {
   deleteModel: async (id: string): Promise<void> => {
     console.log("API: Deleting model", id);
 
-    const res = await fetch(`${API_BASE_URL}/models/${id}`, {
+    const res = await authFetch(`${API_BASE_URL}/models/${id}`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Delete failed");
@@ -119,10 +153,17 @@ export const api = {
     const slicerPreference =
       localStorage.getItem("stlvault-slicer") || "orcaslicer";
 
+    // Bambu Studio doesn't expose a working URL scheme for opening files from
+    // third-party hosts (bambu-connect:// is for print jobs, not file opens,
+    // and bambustudio://open?file= is blocked outside Bambu-owned domains).
+    // Fall back to a plain download; the OS file association opens it in Bambu Studio.
+    if (slicerPreference === "bambu") {
+      return modelURL;
+    }
+
     const slicerProtocols: Record<string, string> = {
       orcaslicer: "orcaslicer://open?file=",
       prusaslicer: "prusaslicer://open?file=",
-      bambu: "bambustudio://open?file=",
       cura: "cura://open?file=",
     };
 
@@ -135,7 +176,7 @@ export const api = {
   bulkDeleteModels: async (ids: string[]): Promise<void> => {
     console.log("API: Bulk deleting models", ids);
 
-    const res = await fetch(`${API_BASE_URL}/models/bulk-delete`, {
+    const res = await authFetch(`${API_BASE_URL}/models/bulk-delete`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids }),
@@ -145,7 +186,7 @@ export const api = {
 
   // 11. BULK MOVE
   bulkMoveModels: async (ids: string[], folderId: string): Promise<void> => {
-    const res = await fetch(`${API_BASE_URL}/models/bulk-move`, {
+    const res = await authFetch(`${API_BASE_URL}/models/bulk-move`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids, folderId }),
@@ -155,7 +196,7 @@ export const api = {
 
   // 12. BULK TAG
   bulkAddTags: async (ids: string[], tags: string[]): Promise<void> => {
-    const res = await fetch(`${API_BASE_URL}/models/bulk-tag`, {
+    const res = await authFetch(`${API_BASE_URL}/models/bulk-tag`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids, tags }),
@@ -165,7 +206,7 @@ export const api = {
 
   // 13. RETRIEVE MODEL OPTIONS
   retrieveModelOptions: async (url: string): Promise<STLModelCollection[]> => {
-    const res = await fetch(`${API_BASE_URL}/printables/options`, {
+    const res = await authFetch(`${API_BASE_URL}/printables/options`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
@@ -183,7 +224,7 @@ export const api = {
     folderId: string,
     typeName: string,
   ): Promise<STLModel> => {
-    const res = await fetch(`${API_BASE_URL}/printables/importid`, {
+    const res = await authFetch(`${API_BASE_URL}/printables/importid`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -209,7 +250,7 @@ export const api = {
     formData.append("file", file);
     if (thumbnail) formData.append("thumbnail", thumbnail);
 
-    const res = await fetch(`${API_BASE_URL}/models/${id}/file`, {
+    const res = await authFetch(`${API_BASE_URL}/models/${id}/file`, {
       method: "PUT",
       body: formData,
     });
@@ -222,7 +263,7 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file);
 
-    const res = await fetch(`${API_BASE_URL}/models/${id}/thumbnail`, {
+    const res = await authFetch(`${API_BASE_URL}/models/${id}/thumbnail`, {
       method: "PUT",
       body: formData,
     });
@@ -240,7 +281,7 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file);
 
-    const res = await fetch(`${API_BASE_URL}/models/${id}/manual`, {
+    const res = await authFetch(`${API_BASE_URL}/models/${id}/manual`, {
       method: "PUT",
       body: formData,
     });
@@ -250,7 +291,7 @@ export const api = {
 
   // 14d. DELETE Manual
   deleteManual: async (id: string): Promise<STLModel> => {
-    const res = await fetch(`${API_BASE_URL}/models/${id}/manual`, {
+    const res = await authFetch(`${API_BASE_URL}/models/${id}/manual`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Manual delete failed");
@@ -259,7 +300,7 @@ export const api = {
 
   // 15. GET Storage Stats
   getStorageStats: async (): Promise<StorageStats> => {
-    const res = await fetch(`${API_BASE_URL}/storage-stats`);
+    const res = await authFetch(`${API_BASE_URL}/storage-stats`);
     if (!res.ok) throw new Error("Failed to fetch storage stats");
     return res.json();
   },

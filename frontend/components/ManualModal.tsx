@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { X, Edit, Save } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import Tooltip from "@mui/material/Tooltip";
+import Icon from "./Icon";
 
 import { STLModel } from "../types";
-import { api } from "../services/api";
+import { api, authFetch } from "../services/api";
 import { useVisualViewport } from "../hooks/useVisualViewport";
 import "./styles/manual.css";
 
@@ -45,7 +44,7 @@ const ManualModal: React.FC<ManualModalProps> = ({
 
     let cancelled = false;
     setLoading(true);
-    fetch(api.getManualUrl(model))
+    authFetch(api.getManualUrl(model))
       .then(async (res) => {
         if (!res.ok) throw new Error("Failed to load manual");
         return res.text();
@@ -78,8 +77,7 @@ const ManualModal: React.FC<ManualModalProps> = ({
   if (!model) return null;
 
   const viewportHeight =
-    visualViewport.height ||
-    (typeof window !== "undefined" ? window.innerHeight : 0);
+    visualViewport.height || (typeof window !== "undefined" ? window.innerHeight : 0);
 
   const handleSave = async () => {
     if (!model || saving) return;
@@ -92,9 +90,7 @@ const ManualModal: React.FC<ManualModalProps> = ({
       setContent(draft);
       setMode("view");
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to save manual",
-      );
+      setError(err instanceof Error ? err.message : "Failed to save manual");
     } finally {
       setSaving(false);
     }
@@ -120,39 +116,36 @@ const ManualModal: React.FC<ManualModalProps> = ({
       onClick={mode === "edit" ? undefined : onClose}
     >
       <div
-        className="bg-vault-800 border border-vault-600 rounded-xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col w-full max-w-3xl"
+        className="bg-surface-container-high border border-outline-variant rounded-xl shadow-2xl flex flex-col w-full max-w-3xl"
         style={{ maxHeight: Math.max(240, viewportHeight - 32) }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center gap-3 p-5 border-b border-vault-700 sticky top-0 bg-vault-800 rounded-t-xl">
+        <div className="flex justify-between items-center gap-3 p-5 border-b border-outline-variant sticky top-0 bg-surface-container-high rounded-t-xl">
           <div className="flex items-center gap-2 min-w-0 flex-1">
-            <h3 className="text-lg font-bold text-white truncate">
-              {model.name}
-            </h3>
+            <h3 className="text-headline-sm font-headline-sm text-on-surface truncate">{model.name}</h3>
             {mode === "view" ? (
-              <Tooltip title="Edit manual">
-                <button
-                  onClick={() => setMode("edit")}
-                  className="text-slate-400 hover:text-white shrink-0 p-1 rounded hover:bg-vault-700"
-                  aria-label="Edit manual"
-                >
-                  <Edit className="w-4 h-4" />
-                </button>
-              </Tooltip>
+              <button
+                onClick={() => setMode("edit")}
+                className="text-on-surface-variant hover:text-on-surface shrink-0 p-1.5 rounded-full hover:bg-surface-container-highest transition-colors"
+                aria-label="Edit manual"
+                title="Edit manual"
+              >
+                <Icon name="edit" className="text-lg" />
+              </button>
             ) : (
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:bg-vault-700 disabled:text-slate-500 text-white rounded transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-label-md font-label-md bg-primary-container text-on-primary-container disabled:opacity-50 rounded-lg transition-colors"
                 >
-                  <Save className="w-4 h-4" />
+                  <Icon name="save" className="text-base" />
                   {saving ? "Saving..." : "Save"}
                 </button>
                 <button
                   onClick={handleCancel}
                   disabled={saving}
-                  className="px-3 py-1.5 text-sm bg-vault-700 hover:bg-vault-600 disabled:opacity-50 text-slate-200 rounded transition-colors"
+                  className="px-3 py-1.5 text-label-md font-label-md border border-outline-variant hover:bg-surface-container-highest disabled:opacity-50 text-on-surface rounded-lg transition-colors"
                 >
                   Cancel
                 </button>
@@ -161,20 +154,16 @@ const ManualModal: React.FC<ManualModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white shrink-0"
+            className="text-on-surface-variant hover:text-on-surface shrink-0"
             aria-label="Close manual"
           >
-            <X className="w-5 h-5" />
+            <Icon name="close" />
           </button>
         </div>
 
         <div className="overflow-y-auto px-6 py-5 flex-1 min-h-0 flex flex-col">
-          {loading && (
-            <p className="text-sm text-slate-400 italic">Loading manual...</p>
-          )}
-          {!loading && error && (
-            <p className="text-sm text-red-400 mb-3">{error}</p>
-          )}
+          {loading && <p className="text-body-sm text-on-surface-variant italic">Loading manual...</p>}
+          {!loading && error && <p className="text-body-sm text-error mb-3">{error}</p>}
           {!loading && mode === "view" && !error && (
             <article className="manual-content">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
@@ -186,7 +175,7 @@ const ManualModal: React.FC<ManualModalProps> = ({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="Write your manual in Markdown..."
-              className="flex-1 min-h-[240px] w-full bg-vault-900 border border-vault-700 rounded-md p-3 text-slate-200 font-mono text-sm resize-none outline-none focus:border-blue-500 overflow-y-auto"
+              className="flex-1 min-h-[240px] w-full bg-surface-container border border-outline-variant rounded-lg p-3 text-on-surface font-mono text-sm resize-none outline-none focus:border-primary overflow-y-auto"
             />
           )}
         </div>

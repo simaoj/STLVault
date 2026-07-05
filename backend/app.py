@@ -4,8 +4,13 @@ import time
 import shutil
 import sqlite3
 import base64
+import secrets
 from fastapi import (
+    APIRouter,
+    Cookie,
+    Depends,
     FastAPI,
+    Response,
     UploadFile,
     File,
     Form,
@@ -27,20 +32,77 @@ MANUAL_DIR = Path(os.getenv("MANUAL_STORAGE", UPLOAD_DIR / "manuals"))
 MANUAL_DIR.mkdir(parents=True, exist_ok=True)
 WEBUI_URL = os.getenv("WEBUI_URL", "http://localhost:8989")
 
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+SESSION_COOKIE_NAME = "stlvault_session"
+# In-memory session store: simple and fine for a single hardcoded admin user,
+# but sessions are lost on backend restart (everyone has to log in again).
+active_sessions: set = set()
+
 
 class FolderData(BaseModel):
     name: str
     parentId: Union[str, None] = None
 
 
+class LoginPayload(BaseModel):
+    username: str
+    password: str
+
+
 app = FastAPI(title="STLVault API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development, or use [WEBUI_URL] for production
+    # Wildcard origins can't be combined with credentialed (cookie) requests,
+    # so this must be the exact frontend origin rather than "*".
+    allow_origins=[WEBUI_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def require_auth(session: Optional[str] = Cookie(default=None, alias=SESSION_COOKIE_NAME)) -> None:
+    if not session or session not in active_sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+api_router = APIRouter(dependencies=[Depends(require_auth)])
+
+
+@app.post("/api/auth/login")
+def login(payload: LoginPayload, response: Response):
+    valid = secrets.compare_digest(payload.username, ADMIN_USERNAME) and secrets.compare_digest(
+        payload.password, ADMIN_PASSWORD
+    )
+    if not valid:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    token = secrets.token_hex(32)
+    active_sessions.add(token)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=WEBUI_URL.startswith("https"),
+        max_age=60 * 60 * 24 * 30,
+        path="/",
+    )
+    return {"username": ADMIN_USERNAME}
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response, session: Optional[str] = Cookie(default=None, alias=SESSION_COOKIE_NAME)):
+    if session:
+        active_sessions.discard(session)
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(_: None = Depends(require_auth)):
+    return {"username": ADMIN_USERNAME}
 
 
 def get_db_conn():
@@ -138,7 +200,7 @@ def save_upload_file(upload_file: UploadFile, dest_path: str) -> int:
 
 
 # --- Folder endpoints ---
-@app.get("/api/folders")
+@api_router.get("/api/folders")
 def get_folders():
     conn = get_db_conn()
     cur = conn.cursor()
@@ -148,7 +210,7 @@ def get_folders():
     return [row_to_folder(r) for r in rows]
 
 
-@app.post("/api/folders")
+@api_router.post("/api/folders")
 def create_folder(item: FolderData):
     fid = str(uuid.uuid4())
     conn = get_db_conn()
@@ -162,7 +224,7 @@ def create_folder(item: FolderData):
     return {"id": fid, "name": item.name, "parentId": item.parentId}
 
 
-@app.patch("/api/folders/{folder_id}")
+@api_router.patch("/api/folders/{folder_id}")
 def update_folder(folder_id: str, item: FolderData):
     conn = get_db_conn()
     cur = conn.cursor()
@@ -177,7 +239,7 @@ def update_folder(folder_id: str, item: FolderData):
     return row_to_folder(row)
 
 
-@app.delete("/api/folders/{folder_id}")
+@api_router.delete("/api/folders/{folder_id}")
 def delete_folder(folder_id: str):
     conn = get_db_conn()
     cur = conn.cursor()
@@ -196,7 +258,7 @@ def delete_folder(folder_id: str):
 
 
 # --- Model endpoints ---
-@app.get("/api/models")
+@api_router.get("/api/models")
 def get_models(folderId: Optional[str] = None):
     conn = get_db_conn()
     cur = conn.cursor()
@@ -219,7 +281,7 @@ def get_model_info(modelId):
     conn.close()
     return row_to_model(m)
 
-@app.post("/api/models/upload")
+@api_router.post("/api/models/upload")
 def upload_model(
     file: UploadFile = File(...),
     folderId: str = Form("1"),
@@ -276,7 +338,7 @@ def upload_model(
     return model
 
 
-@app.patch("/api/models/{model_id}")
+@api_router.patch("/api/models/{model_id}")
 def update_model(model_id: str, updates: dict):
     conn = get_db_conn()
     cur = conn.cursor()
@@ -307,7 +369,7 @@ def update_model(model_id: str, updates: dict):
     return row_to_model(row)
 
 
-@app.delete("/api/models/{model_id}")
+@api_router.delete("/api/models/{model_id}")
 def delete_model(model_id: str):
     conn = get_db_conn()
     cur = conn.cursor()
@@ -334,7 +396,7 @@ def delete_model(model_id: str):
     return {"ok": True}
 
 
-@app.get("/api/models/{model_id}/download")
+@api_router.get("/api/models/{model_id}/download")
 def download_model(model_id: str):
     # Find file matching id
     m_info = get_model_info(model_id)
@@ -348,7 +410,7 @@ def download_model(model_id: str):
     raise HTTPException(status_code=404, detail="File not found")
 
 
-@app.post("/api/models/bulk-delete")
+@api_router.post("/api/models/bulk-delete")
 def bulk_delete(payload: dict):
     ids = payload.get("ids", [])
     conn = get_db_conn()
@@ -373,7 +435,7 @@ def bulk_delete(payload: dict):
     return {"ok": True}
 
 
-@app.post("/api/models/bulk-move")
+@api_router.post("/api/models/bulk-move")
 def bulk_move(payload: dict):
     ids = payload.get("ids", [])
     folderId = payload.get("folderId")
@@ -386,7 +448,7 @@ def bulk_move(payload: dict):
     return {"ok": True}
 
 
-@app.post("/api/models/bulk-tag")
+@api_router.post("/api/models/bulk-tag")
 def bulk_tag(payload: dict):
     ids = payload.get("ids", [])
     tags = payload.get("tags", [])
@@ -409,7 +471,7 @@ def bulk_tag(payload: dict):
     return {"ok": True}
 
 
-@app.put("/api/models/{model_id}/file")
+@api_router.put("/api/models/{model_id}/file")
 def replace_model_file(
     model_id: str, file: UploadFile = File(...), thumbnail: Optional[str] = Form(None)
 ):
@@ -443,7 +505,7 @@ def replace_model_file(
     return row_to_model(row)
 
 
-@app.put("/api/models/{model_id}/thumbnail")
+@api_router.put("/api/models/{model_id}/thumbnail")
 def replace_model_thumbnail(
     model_id: str, file: UploadFile = File(...)
 ):
@@ -475,7 +537,7 @@ def replace_model_thumbnail(
     return row_to_model(row)
 
 
-@app.get("/api/models/{model_id}/manual")
+@api_router.get("/api/models/{model_id}/manual")
 def get_model_manual(model_id: str):
     path = MANUAL_DIR / f"{model_id}.md"
     if not path.exists():
@@ -483,7 +545,7 @@ def get_model_manual(model_id: str):
     return FileResponse(path, media_type="text/markdown")
 
 
-@app.put("/api/models/{model_id}/manual")
+@api_router.put("/api/models/{model_id}/manual")
 def upload_model_manual(model_id: str, file: UploadFile = File(...)):
     conn = get_db_conn()
     cur = conn.cursor()
@@ -505,7 +567,7 @@ def upload_model_manual(model_id: str, file: UploadFile = File(...)):
     return row_to_model(row)
 
 
-@app.delete("/api/models/{model_id}/manual")
+@api_router.delete("/api/models/{model_id}/manual")
 def delete_model_manual(model_id: str):
     conn = get_db_conn()
     cur = conn.cursor()
@@ -528,7 +590,7 @@ def delete_model_manual(model_id: str):
     return row_to_model(row)
 
 
-@app.get("/api/storage-stats")
+@api_router.get("/api/storage-stats")
 def storage_stats():
     used = 0
     for root, _dirs, files in os.walk(UPLOAD_DIR):
@@ -539,7 +601,7 @@ def storage_stats():
 
 
 ## PRINTABLES IMPORTS
-@app.post("/api/printables/importid")
+@api_router.post("/api/printables/importid")
 def import_model_by_id(payload: dict):
     importer = printables.PrintablesImporter()
     modelId = payload.get("id")
@@ -604,7 +666,7 @@ def import_model_by_id(payload: dict):
     return model
 
 
-@app.post("/api/printables/options")
+@api_router.post("/api/printables/options")
 def import_model_options(payload: dict):
     importer = printables.PrintablesImporter()
     url = payload.get("url")
@@ -619,6 +681,9 @@ def import_model_options(payload: dict):
         raise ValueError("URL is None")
     except Exception as e:
         raise e
+
+
+app.include_router(api_router)
 
 
 if __name__ == "__main__":

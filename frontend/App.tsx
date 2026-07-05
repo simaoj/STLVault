@@ -1,56 +1,36 @@
-import React, { useState, useEffect } from "react";
-import Sidebar from "./components/Sidebar";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import ModelList from "./components/ModelList";
 import DetailPanel from "./components/DetailPanel";
 import Settings from "./components/Settings";
 import Navbar from "./components/Navbar";
 import ManualModal from "./components/ManualModal";
-import { STLModel, Folder, StorageStats, STLModelCollection } from "./types";
+import Icon from "./components/Icon";
+import { STLModel, Folder, STLModelCollection } from "./types";
 import { generateThumbnail } from "./services/thumbnailGenerator";
-import { api } from "./services/api";
-import {
-  FolderInput,
-  Tags,
-  X,
-  Trash2,
-  AlertTriangle,
-  Download,
-  FileUp,
-  Globe,
-} from "lucide-react";
+import { api, authFetch } from "./services/api";
+import Login from "./components/Login";
 import JSZip from "jszip";
-import { useMediaQuery } from "./hooks/useMediaQuery";
 import { useVisualViewport } from "./hooks/useVisualViewport";
-import Snackbar, { SnackbarCloseReason } from "@mui/material/Snackbar";
-import { ThemeProvider, createTheme } from "@mui/material/styles";
-import CssBaseline from "@mui/material/CssBaseline";
-import Alert from "@mui/material/Alert";
+
+const primaryBtn =
+  "bg-primary-container text-on-primary-container rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 font-bold transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed";
+const outlinedBtn =
+  "border border-outline-variant text-on-surface hover:bg-surface-container-highest rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 font-bold transition-colors";
+const modalInput =
+  "w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all";
 
 const App = () => {
-  const isDesktop = useMediaQuery("(min-width: 1024px)", true);
-  const isMobile = !isDesktop;
   const visualViewport = useVisualViewport();
-  const darkTheme = createTheme({
-    palette: {
-      mode: "dark",
-    },
-  });
+  const [authStatus, setAuthStatus] = useState<"loading" | "authed" | "anon">("loading");
   const [folders, setFolders] = useState<Folder[]>([]);
   const [models, setModels] = useState<STLModel[]>([]);
-  const [storageStats, setStorageStats] = useState<StorageStats>({
-    used: 0,
-    total: 0,
-  });
 
   const [currentFolderId, setCurrentFolderId] = useState<string>("all");
-  const [currentFolderParentId, setCurrentFolderParentId] = useState("");
+  const [currentFolderParentId, setCurrentFolderParentId] = useState("all");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<number>(0);
   const [showSettings, setShowSettings] = useState(false);
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [isMobileSidebarMounted, setIsMobileSidebarMounted] = useState(false);
-  const [isMobileSidebarVisible, setIsMobileSidebarVisible] = useState(false);
 
   // Bulk Action State
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -69,12 +49,12 @@ const App = () => {
   const [showImportOptionsModal, setShowImportOptionsModal] = useState(false);
   const [modelsOptions, setModelsOptions] = useState<STLModelCollection[]>([]);
   const [folderOptions, setFolderOptions] = useState<Set<string>>(new Set());
-  const [selectedOptions, setSelectedOptions] = useState<Set<string>>(
-    new Set(),
-  );
+  const [selectedOptions, setSelectedOptions] = useState<Set<string>>(new Set());
   const [importUrl, setImportUrl] = useState("");
   const [importFolderId, setImportFolderId] = useState("");
   const port = import.meta.env.VITE_API_URL;
+  const navUploadInputRef = useRef<HTMLInputElement>(null);
+
   // Delete Confirmation State
   const [deleteConfirmState, setDeleteConfirmState] = useState<{
     isOpen: boolean;
@@ -87,17 +67,38 @@ const App = () => {
     mode: "view" | "edit";
   }>({ id: null, mode: "view" });
 
+  // Check for an existing session on load
+  useEffect(() => {
+    api
+      .getMe()
+      .then(() => setAuthStatus("authed"))
+      .catch(() => setAuthStatus("anon"));
+  }, []);
+
+  // React to session expiry / 401s from any API call
+  useEffect(() => {
+    const handleUnauthorized = () => setAuthStatus("anon");
+    window.addEventListener("stlvault:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("stlvault:unauthorized", handleUnauthorized);
+  }, []);
+
+  const handleLogout = async () => {
+    await api.logout();
+    setAuthStatus("anon");
+  };
+
   // Initial Data Fetch
   useEffect(() => {
+    if (authStatus !== "authed") return;
     const fetchData = async () => {
       setIsLoading(true);
       try {
-        const [fetchedFolders, fetchedModels, fetchedStats] = await Promise.all(
-          [api.getFolders(), api.getModels("all"), api.getStorageStats()],
-        );
+        const [fetchedFolders, fetchedModels] = await Promise.all([
+          api.getFolders(),
+          api.getModels("all"),
+        ]);
         setFolders(fetchedFolders);
         setModels(fetchedModels);
-        setStorageStats(fetchedStats);
       } catch (error) {
         console.error("Failed to fetch initial data:", error);
       } finally {
@@ -105,21 +106,23 @@ const App = () => {
       }
     };
     fetchData();
-  }, []);
+  }, [authStatus]);
 
-  // Refresh storage stats when models change (upload, delete, replace)
-  useEffect(() => {
-    api
-      .getStorageStats()
-      .then(setStorageStats)
-      .catch((e) => console.error("Failed to refresh storage stats", e));
-  }, [models]);
+  // Direct-children counts per folder (models + subfolders), used for Collection card badges
+  const folderCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    models.forEach((m) => {
+      counts[m.folderId] = (counts[m.folderId] || 0) + 1;
+    });
+    folders.forEach((f) => {
+      if (f.parentId) counts[f.parentId] = (counts[f.parentId] || 0) + 1;
+    });
+    return counts;
+  }, [models, folders]);
 
   // Filter models based on selection
   const filteredModels =
-    currentFolderId === "all"
-      ? models
-      : models.filter((m) => m.folderId === currentFolderId);
+    currentFolderId === "all" ? models : models.filter((m) => m.folderId === currentFolderId);
 
   // Filter subfolders based on selection
   const filteredFolders =
@@ -137,51 +140,6 @@ const App = () => {
     );
   }, [currentFolderId]);
 
-  // Close mobile sidebar when switching to desktop
-  useEffect(() => {
-    if (isDesktop) setIsMobileSidebarOpen(false);
-  }, [isDesktop]);
-
-  // Mobile sidebar animation: keep mounted during close transition
-  useEffect(() => {
-    const transitionMs = 220;
-    let timeoutId: number | undefined;
-
-    if (isMobileSidebarOpen) {
-      setIsMobileSidebarMounted(true);
-      // Delay visibility to allow initial off-screen position to render before sliding in
-      timeoutId = window.setTimeout(() => setIsMobileSidebarVisible(true), 10);
-    } else {
-      setIsMobileSidebarVisible(false);
-      timeoutId = window.setTimeout(
-        () => setIsMobileSidebarMounted(false),
-        transitionMs,
-      );
-    }
-
-    return () => {
-      if (typeof timeoutId === "number") window.clearTimeout(timeoutId);
-    };
-  }, [isMobileSidebarOpen]);
-
-  // Mobile sidebar UX: ESC to close + prevent body scroll
-  useEffect(() => {
-    if (!isMobileSidebarMounted) return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setIsMobileSidebarOpen(false);
-    };
-
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [isMobileSidebarMounted]);
-
   const selectedModel = models.find((m) => m.id === selectedModelId) || null;
   const manualModel = models.find((m) => m.id === manualState.id) || null;
 
@@ -190,14 +148,10 @@ const App = () => {
       ? "All Models"
       : folders.find((f) => f.id === currentFolderId)?.name || "Folder";
 
-  const handleCreateFolder = async (
-    name: string,
-    parentId: string | null = null,
-  ) => {
+  const handleCreateFolder = async (name: string, parentId: string | null = null) => {
     try {
       const newFolder = await api.createFolder(name, parentId);
       setFolders((prev) => [...prev, newFolder]);
-      // If created under a parent, ensure parent is expanded in Sidebar (Sidebar handles its own expansion state, but good to know)
     } catch (error) {
       console.error("Failed to create folder:", error);
     }
@@ -206,9 +160,7 @@ const App = () => {
   const handleRenameFolder = async (id: string, newName: string) => {
     try {
       await api.updateFolder(id, newName);
-      setFolders((prev) =>
-        prev.map((f) => (f.id === id ? { ...f, name: newName } : f)),
-      );
+      setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name: newName } : f)));
     } catch (error) {
       console.error("Failed to rename folder", error);
     }
@@ -219,20 +171,14 @@ const App = () => {
     const hasSubfolders = folders.some((f) => f.parentId === id);
 
     if (hasModels || hasSubfolders) {
-      alert(
-        "Folder must be empty to delete. Please delete or move all models and subfolders first.",
-      );
+      alert("Folder must be empty to delete. Please delete or move all models and subfolders first.");
       return;
     }
     setDeleteConfirmState({ isOpen: true, type: "folder", id });
   };
 
   // Core upload logic
-  const executeUpload = async (
-    files: File[],
-    targetFolderId: string,
-    tags: string[],
-  ) => {
+  const executeUpload = async (files: File[], targetFolderId: string, tags: string[]) => {
     setUploadQueue((prev) => prev + files.length);
 
     for (const file of files) {
@@ -241,17 +187,10 @@ const App = () => {
         try {
           thumbnail = await generateThumbnail(file);
         } catch (e) {
-          console.warn(
-            "Thumbnail generation failed, uploading without thumbnail",
-          );
+          console.warn("Thumbnail generation failed, uploading without thumbnail");
         }
 
-        const newModel = await api.uploadModel(
-          file,
-          targetFolderId,
-          thumbnail,
-          tags,
-        );
+        const newModel = await api.uploadModel(file, targetFolderId, thumbnail, tags);
         setModels((prev) => [newModel, ...prev]);
       } catch (error) {
         console.error(`Failed to upload ${file.name}:`, error);
@@ -261,31 +200,21 @@ const App = () => {
     }
   };
 
-  const handleUpload = async (
-    fileList: FileList,
-    specificFolderId?: string,
-  ) => {
+  const handleUpload = async (fileList: FileList, specificFolderId?: string) => {
     const files = Array.from(fileList);
 
-    // If dropping into the general area ("all") and not a specific folder drop
-    // We want to show the modal to let user pick a folder and add tags
     if (!specificFolderId && currentFolderId === "all") {
       setPendingFiles(files);
-      // Default to first folder if available
       setUploadFolderId(folders.length > 0 ? folders[0].id : "");
       setUploadTags("");
       setShowUploadModal(true);
       return;
     }
 
-    // Normal flow (specific folder target or current view is a folder)
     const targetFolderId = specificFolderId || currentFolderId;
 
-    // Fallback if for some reason 'all' is passed without modal (shouldn't happen with above check)
     const finalFolderId =
-      targetFolderId === "all" && folders.length > 0
-        ? folders[0].id
-        : targetFolderId;
+      targetFolderId === "all" && folders.length > 0 ? folders[0].id : targetFolderId;
 
     await executeUpload(files, finalFolderId, []);
   };
@@ -307,10 +236,7 @@ const App = () => {
     setImportUrl("");
     setSelectedOptions(new Set());
     setModelsOptions([]);
-    // Pre-select current folder if specific, otherwise first available
-    setImportFolderId(
-      currentFolderId !== "all" ? currentFolderId : folders[0]?.id || "",
-    );
+    setImportFolderId(currentFolderId !== "all" ? currentFolderId : folders[0]?.id || "");
     setShowImportModal(true);
   };
 
@@ -347,19 +273,11 @@ const App = () => {
   };
 
   const handleUpdateSTEPThumbnail = async (newModel: STLModel) => {
-    let tbuff = await fetch(port + newModel.url).then((response) => {
-      return response;
-    });
-    let thumbnailBuffer = await tbuff.bytes().then((bytes) => {
-      return bytes;
-    });
+    let tbuff = await authFetch(port + newModel.url).then((response) => response);
+    let thumbnailBuffer = await tbuff.bytes().then((bytes) => bytes);
     try {
-      let thumbnail = await generateThumbnail(
-        new File([thumbnailBuffer], newModel.name),
-      );
-      let newerModel = await api.updateModel(newModel.id, {
-        thumbnail: thumbnail,
-      });
+      let thumbnail = await generateThumbnail(new File([thumbnailBuffer], newModel.name));
+      let newerModel = await api.updateModel(newModel.id, { thumbnail: thumbnail });
       setModels((prev) => [newerModel, ...prev]);
     } catch (e) {
       console.warn("Thumbnail generation failed, uploading without thumbnail");
@@ -397,9 +315,7 @@ const App = () => {
 
   const handleUpdateModel = async (id: string, updates: Partial<STLModel>) => {
     try {
-      setModels((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, ...updates } : m)),
-      );
+      setModels((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
       await api.updateModel(id, updates);
     } catch (error) {
       console.error("Failed to update model:", error);
@@ -409,9 +325,7 @@ const App = () => {
   const handleUploadManual = async (id: string, file: File) => {
     try {
       const updated = await api.uploadManual(id, file);
-      setModels((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, manual: updated.manual } : m)),
-      );
+      setModels((prev) => prev.map((m) => (m.id === id ? { ...m, manual: updated.manual } : m)));
       return updated;
     } catch (error) {
       console.error("Failed to upload manual:", error);
@@ -423,9 +337,7 @@ const App = () => {
   const handleDeleteManual = async (id: string) => {
     try {
       const updated = await api.deleteManual(id);
-      setModels((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, manual: updated.manual } : m)),
-      );
+      setModels((prev) => prev.map((m) => (m.id === id ? { ...m, manual: updated.manual } : m)));
     } catch (error) {
       console.error("Failed to delete manual:", error);
       alert("Failed to delete manual");
@@ -433,18 +345,15 @@ const App = () => {
   };
 
   const handleDeleteModel = (id: string) => {
-    console.log("Opening delete confirmation for model:", id);
     setDeleteConfirmState({ isOpen: true, type: "single", id });
   };
 
   const handleBulkDelete = () => {
-    console.log("Opening bulk delete confirmation for:", selectedIds);
     setDeleteConfirmState({ isOpen: true, type: "bulk" });
   };
 
   const executeDelete = async () => {
     const { type, id } = deleteConfirmState;
-    console.log(`Executing delete type: ${type}, id: ${id}`);
 
     try {
       if (type === "single" && id) {
@@ -456,8 +365,7 @@ const App = () => {
         await api.bulkDeleteModels(ids);
         setModels((prev) => prev.filter((m) => !ids.includes(m.id)));
         setSelectedIds(new Set());
-        if (selectedModelId && ids.includes(selectedModelId))
-          setSelectedModelId(null);
+        if (selectedModelId && ids.includes(selectedModelId)) setSelectedModelId(null);
       } else if (type === "folder" && id) {
         await api.deleteFolder(id);
         setFolders((prev) => prev.filter((f) => f.id !== id));
@@ -483,7 +391,7 @@ const App = () => {
     setSelectedIds(newSet);
   };
 
-  const handleSelectAll = (filtered) => {
+  const handleSelectAll = (filtered: STLModel[]) => {
     if (selectedIds.size === filtered.length) {
       setSelectedIds(new Set());
     } else {
@@ -497,9 +405,7 @@ const App = () => {
       const ids = Array.from(selectedIds) as string[];
       await api.bulkMoveModels(ids, targetFolderId);
       setModels((prev) =>
-        prev.map((m) =>
-          selectedIds.has(m.id) ? { ...m, folderId: targetFolderId } : m,
-        ),
+        prev.map((m) => (selectedIds.has(m.id) ? { ...m, folderId: targetFolderId } : m)),
       );
       setShowMoveModal(false);
       setSelectedIds(new Set());
@@ -512,9 +418,7 @@ const App = () => {
     try {
       await api.bulkMoveModels(modelIds, targetFolderId);
       setModels((prev) =>
-        prev.map((m) =>
-          modelIds.includes(m.id) ? { ...m, folderId: targetFolderId } : m,
-        ),
+        prev.map((m) => (modelIds.includes(m.id) ? { ...m, folderId: targetFolderId } : m)),
       );
       setSelectedIds(new Set());
     } catch (e) {
@@ -552,11 +456,10 @@ const App = () => {
       const zip = new JSZip();
       const selectedModels = models.filter((m) => selectedIds.has(m.id));
 
-      // Add files to zip
       const filePromises = selectedModels.map(async (model) => {
         try {
           const url = api.getDownloadUrl(model);
-          const response = await fetch(url);
+          const response = await authFetch(url);
           if (!response.ok) throw new Error(`Failed to fetch ${model.name}`);
           const blob = await response.blob();
           zip.file(model.name, blob);
@@ -567,11 +470,9 @@ const App = () => {
 
       await Promise.all(filePromises);
 
-      // Generate zip
       const content = await zip.generateAsync({ type: "blob" });
       const saveUrl = URL.createObjectURL(content);
 
-      // Trigger download
       const link = document.createElement("a");
       link.href = saveUrl;
       link.download = `stlvault-batch-${new Date().getTime()}.zip`;
@@ -580,7 +481,6 @@ const App = () => {
       document.body.removeChild(link);
       URL.revokeObjectURL(saveUrl);
 
-      // Clear selection
       setSelectedIds(new Set());
     } catch (error) {
       console.error("Bulk download failed:", error);
@@ -590,759 +490,573 @@ const App = () => {
     }
   };
 
+  const modalWrapperStyle = (extraZ = 60) => ({
+    width: "100%",
+    height: visualViewport.height || (typeof window !== "undefined" ? window.innerHeight : 0),
+    transform: `translate(${visualViewport.offsetLeft}px, ${visualViewport.offsetTop}px)`,
+  });
+
+  if (authStatus === "loading") {
+    return (
+      <div className="flex items-center justify-center h-dvh bg-background">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  if (authStatus === "anon") {
+    return <Login onSuccess={() => setAuthStatus("authed")} />;
+  }
+
   return (
-    <ThemeProvider theme={darkTheme}>
-      <CssBaseline />
-      <div
-        className={`${
-          isDesktop ? "flex" : "flex flex-col"
-        } h-dvh text-slate-200 font-sans selection:bg-blue-500/30 overflow-hidden`}
-      >
-        {isDesktop ? (
-          <Sidebar
-            folders={folders}
-            models={models}
-            currentFolderId={currentFolderId}
-            storageStats={storageStats}
-            onSelectFolder={(id) => {
-              setCurrentFolderId(id);
-              setSelectedModelId(null);
-              setShowSettings(false);
-            }}
-            onCreateFolder={handleCreateFolder}
-            onRenameFolder={handleRenameFolder}
-            onDeleteFolder={handleDeleteFolder}
-            onMoveToFolder={handleDropMove}
-            onUploadToFolder={(folderId, files) =>
-              handleUpload(files, folderId)
-            }
-            onOpenSettings={() => setShowSettings(true)}
-            variant="desktop"
-          />
-        ) : (
-          <>
-            <Navbar
-              title="STL Vault"
-              subtitle={showSettings ? "Settings" : currentFolderName}
-              onOpenSidebar={() => setIsMobileSidebarOpen(true)}
-              onOpenSettings={() => setShowSettings(true)}
-              showMenuButton={!showSettings}
-            />
+    <div className="flex flex-col h-dvh overflow-hidden">
+      <Navbar
+        activeView={showSettings ? "settings" : "library"}
+        onNavigateLibrary={() => setShowSettings(false)}
+        onNavigateSettings={() => setShowSettings(true)}
+        onOpenUpload={() => navUploadInputRef.current?.click()}
+        onFocusSearch={() => {
+          setShowSettings(false);
+          requestAnimationFrame(() => document.getElementById("search-input")?.focus());
+        }}
+        onLogout={handleLogout}
+      />
+      <input
+        ref={navUploadInputRef}
+        type="file"
+        className="hidden"
+        multiple
+        accept=".stl,.step,.stp,.3mf"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            handleUpload(e.target.files);
+            e.target.value = "";
+          }
+        }}
+      />
 
-            {isMobileSidebarMounted && (
-              <div className="fixed inset-0 z-[70]">
-                <div
-                  className={`absolute inset-0 bg-black/60 backdrop-blur-[2px] transition-opacity duration-200 ${
-                    isMobileSidebarVisible ? "opacity-100" : "opacity-0"
-                  }`}
-                  onClick={() => setIsMobileSidebarOpen(false)}
-                />
-                <div
-                  className={`absolute inset-y-0 left-0 w-[85vw] max-w-[360px] transform transition-transform duration-200 ease-out ${
-                    isMobileSidebarVisible
-                      ? "translate-x-0"
-                      : "-translate-x-full"
-                  }`}
-                >
-                  <Sidebar
-                    folders={folders}
-                    models={models}
-                    currentFolderId={currentFolderId}
-                    storageStats={storageStats}
-                    onSelectFolder={(id) => {
-                      setCurrentFolderId(id);
-                      setSelectedModelId(null);
-                      setShowSettings(false);
-                      setIsMobileSidebarOpen(false);
-                    }}
-                    onCreateFolder={handleCreateFolder}
-                    onRenameFolder={handleRenameFolder}
-                    onDeleteFolder={handleDeleteFolder}
-                    onMoveToFolder={handleDropMove}
-                    onUploadToFolder={(folderId, files) =>
-                      handleUpload(files, folderId)
-                    }
-                    onOpenSettings={() => {
-                      setShowSettings(true);
-                      setIsMobileSidebarOpen(false);
-                    }}
-                    variant="mobile"
-                  />
-                </div>
+      {showSettings ? (
+        <Settings />
+      ) : (
+        <main className="flex-1 flex overflow-hidden relative">
+          {isLoading ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-surface-dim z-50">
+              <div className="flex flex-col items-center gap-4">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
+                <p className="text-on-surface-variant animate-pulse text-body-sm">Processing...</p>
               </div>
-            )}
-          </>
-        )}
+            </div>
+          ) : (
+            <ModelList
+              models={filteredModels}
+              folders={filteredFolders}
+              folderCounts={folderCounts}
+              currentFolderId={currentFolderId}
+              currentFolderName={currentFolderName}
+              onBackNavigation={() => setCurrentFolderId(currentFolderParentId)}
+              onUpload={(files) => handleUpload(files)}
+              onImport={handleOpenImport}
+              onSelectModel={(m) => setSelectedModelId(m.id)}
+              onDelete={handleDeleteModel}
+              onOpenManual={(m) => setManualState({ id: m.id, mode: "view" })}
+              selectedModelId={selectedModelId}
+              selectedIds={selectedIds}
+              onToggleSelection={handleToggleSelection}
+              onSelectAll={(filtered) => handleSelectAll(filtered)}
+              onClearSelection={() => setSelectedIds(new Set())}
+              onNavigateFolder={(id) => setCurrentFolderId(id)}
+              onMoveToFolder={handleDropMove}
+              onUploadToFolder={(folderId, files) => handleUpload(files, folderId)}
+              onCreateFolder={handleCreateFolder}
+              onRenameFolder={handleRenameFolder}
+              onDeleteFolder={handleDeleteFolder}
+            />
+          )}
 
-        {/* Settings View */}
-        {showSettings ? (
-          <Settings onBack={() => setShowSettings(false)} />
-        ) : (
-          <>
-            <main className="flex-1 flex overflow-hidden relative">
-              {isLoading ? (
-                <div className="absolute inset-0 flex items-center justify-center bg-vault-900 z-50">
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-                    <p className="text-slate-400 animate-pulse">
-                      Processing...
+          {/* Upload Indicator */}
+          {uploadQueue > 0 && (
+            <div className="absolute bottom-6 left-6 bg-primary-container text-on-primary-container px-4 py-2 rounded-xl shadow-lg z-50 flex items-center gap-3">
+              <div className="w-4 h-4 border-2 border-on-primary-container border-t-transparent rounded-full animate-spin" />
+              <span className="text-label-md font-label-md">Uploading {uploadQueue} file(s)...</span>
+            </div>
+          )}
+
+          {/* Backdrop for closing detail panel */}
+          <div
+            className={`absolute inset-0 bg-black/50 backdrop-blur-[2px] z-20 transition-opacity duration-300 ${
+              selectedModelId ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+            }`}
+            onClick={() => setSelectedModelId(null)}
+          />
+
+          {/* Slide-over panel */}
+          <div
+            className={`absolute top-0 right-0 h-full transition-transform duration-300 ease-in-out transform ${
+              selectedModelId ? "translate-x-0" : "translate-x-full"
+            } z-30`}
+          >
+            <DetailPanel
+              model={selectedModel}
+              onClose={() => setSelectedModelId(null)}
+              onUpdate={handleUpdateModel}
+              onDelete={handleDeleteModel}
+              onOpenManual={(m) => setManualState({ id: m.id, mode: "view" })}
+              onEditManual={(m) => setManualState({ id: m.id, mode: "edit" })}
+              onUploadManual={handleUploadManual}
+              onDeleteManual={handleDeleteManual}
+            />
+          </div>
+
+          {/* Floating Action Bar */}
+          {selectedIds.size > 0 && (
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 glass-panel shadow-2xl rounded-full px-6 py-3 flex items-center gap-4 z-50">
+              <div className="flex items-center gap-2 border-r border-outline-variant pr-4">
+                <span className="font-bold text-on-surface">{selectedIds.size}</span>
+                <span className="text-on-surface-variant text-body-sm">selected</span>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  className="ml-2 text-on-surface-variant hover:text-on-surface"
+                  aria-label="Clear selection"
+                >
+                  <Icon name="close" className="text-lg" />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setShowMoveModal(true)}
+                  className="p-2 rounded-full hover:bg-surface-container-highest text-on-surface-variant hover:text-primary transition-colors flex items-center gap-2"
+                  title="Move Selected"
+                >
+                  <Icon name="drive_file_move" className="text-lg" />
+                  <span className="text-label-sm font-label-sm hidden sm:inline">Move</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setBulkTags("");
+                    setShowTagModal(true);
+                  }}
+                  className="p-2 rounded-full hover:bg-surface-container-highest text-on-surface-variant hover:text-secondary transition-colors flex items-center gap-2"
+                  title="Tag Selected"
+                >
+                  <Icon name="sell" className="text-lg" />
+                  <span className="text-label-sm font-label-sm hidden sm:inline">Tag</span>
+                </button>
+
+                <button
+                  onClick={handleBulkDownload}
+                  className="p-2 rounded-full hover:bg-surface-container-highest text-on-surface-variant hover:text-tertiary transition-colors flex items-center gap-2"
+                  title="Download Selected"
+                >
+                  <Icon name="download" className="text-lg" />
+                  <span className="text-label-sm font-label-sm hidden sm:inline">Download</span>
+                </button>
+
+                <button
+                  onClick={handleBulkDelete}
+                  className="p-2 rounded-full hover:bg-surface-container-highest text-on-surface-variant hover:text-error transition-colors flex items-center gap-2"
+                  title="Delete Selected"
+                >
+                  <Icon name="delete" className="text-lg" />
+                  <span className="text-label-sm font-label-sm hidden sm:inline">Delete</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Modals Layer */}
+
+          <ManualModal
+            model={manualModel}
+            initialMode={manualState.mode}
+            onClose={() => setManualState({ id: null, mode: "view" })}
+            onSave={handleUploadManual}
+          />
+
+          {/* Upload Modal */}
+          {showUploadModal && (
+            <div
+              className={`fixed left-0 top-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
+                visualViewport.keyboardOpen ? "items-start" : "items-center"
+              }`}
+              style={modalWrapperStyle()}
+            >
+              <div
+                className="bg-surface-container-high border border-outline-variant rounded-xl p-6 w-96 shadow-2xl overflow-y-auto"
+                style={{
+                  maxHeight: Math.max(
+                    240,
+                    (visualViewport.height || (typeof window !== "undefined" ? window.innerHeight : 0)) - 32,
+                  ),
+                }}
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-headline-sm font-headline-sm text-on-surface flex items-center gap-2">
+                    <Icon name="upload_file" className="text-primary" /> Upload Files
+                  </h3>
+                  <button onClick={() => setShowUploadModal(false)} className="text-on-surface-variant hover:text-on-surface">
+                    <Icon name="close" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleConfirmUpload}>
+                  <div className="mb-4 p-3 bg-surface-container rounded-lg border border-outline-variant">
+                    <p className="text-body-sm font-body-sm text-on-surface font-medium">
+                      {pendingFiles.length} files selected
+                    </p>
+                    <p className="text-label-sm text-on-surface-variant truncate mt-1">
+                      {pendingFiles.map((f) => f.name).join(", ")}
                     </p>
                   </div>
-                </div>
-              ) : (
-                <ModelList
-                  models={filteredModels}
-                  folders={filteredFolders}
-                  currentFolderName={currentFolderName}
-                  onBackNavigation={() => {
-                    setCurrentFolderId(currentFolderParentId);
-                  }}
-                  onUpload={(files) => handleUpload(files)}
-                  onImport={handleOpenImport}
-                  onSelectModel={(m) => setSelectedModelId(m.id)}
-                  onDelete={handleDeleteModel}
-                  onOpenManual={(m) =>
-                    setManualState({ id: m.id, mode: "view" })
-                  }
-                  selectedModelId={selectedModelId}
-                  // Selection Props
-                  selectedIds={selectedIds}
-                  onToggleSelection={handleToggleSelection}
-                  onSelectAll={(filtered) => handleSelectAll(filtered)}
-                  onClearSelection={() => setSelectedIds(new Set())}
-                  onNavigateFolder={(id) => setCurrentFolderId(id)}
-                  onMoveToFolder={handleDropMove}
-                  onUploadToFolder={(folderId, files) =>
-                    handleUpload(files, folderId)
-                  }
-                />
-              )}
 
-              {/* Upload Indicator */}
-              {uploadQueue > 0 && (
-                <div className="absolute bottom-6 left-6 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-3 animate-pulse">
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span className="text-sm font-medium">
-                    Uploading {uploadQueue} file(s)...
-                  </span>
-                </div>
-              )}
-
-              {/* Backdrop for closing sidebar */}
-              <div
-                className={`absolute inset-0 bg-black/50 backdrop-blur-[2px] z-20 transition-opacity duration-300 ${
-                  selectedModelId
-                    ? "opacity-100 pointer-events-auto"
-                    : "opacity-0 pointer-events-none"
-                }`}
-                onClick={() => setSelectedModelId(null)}
-              />
-
-              {/* Slide-over panel */}
-              <div
-                className={`absolute top-0 right-0 h-full transition-transform duration-300 ease-in-out transform ${
-                  selectedModelId ? "translate-x-0" : "translate-x-full"
-                } z-30`}
-              >
-                <DetailPanel
-                  model={selectedModel}
-                  onClose={() => setSelectedModelId(null)}
-                  onUpdate={handleUpdateModel}
-                  onDelete={handleDeleteModel}
-                  onOpenManual={(m) =>
-                    setManualState({ id: m.id, mode: "view" })
-                  }
-                  onEditManual={(m) =>
-                    setManualState({ id: m.id, mode: "edit" })
-                  }
-                  onUploadManual={handleUploadManual}
-                  onDeleteManual={handleDeleteManual}
-                />
-              </div>
-
-              {/* Floating Action Bar - Moved to App to ensure it is top-level Z-index */}
-              {selectedIds.size > 0 && (
-                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-vault-800 border border-vault-600 shadow-2xl rounded-full px-6 py-3 flex items-center gap-4 z-50 animate-in slide-in-from-bottom-10 duration-200">
-                  <div className="flex items-center gap-2 border-r border-vault-600 pr-4">
-                    <span className="font-bold text-white">
-                      {selectedIds.size}
-                    </span>
-                    <span className="text-slate-400 text-sm">selected</span>
-                    <button
-                      onClick={() => setSelectedIds(new Set())}
-                      className="ml-2 text-slate-500 hover:text-white"
+                  <div className="mb-4">
+                    <label className="block text-label-md font-label-md text-on-surface-variant mb-1">
+                      Destination Folder
+                    </label>
+                    <select
+                      className={modalInput}
+                      value={uploadFolderId}
+                      onChange={(e) => setUploadFolderId(e.target.value)}
                     >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setShowMoveModal(true)}
-                      className="p-2 rounded-full hover:bg-vault-700 text-slate-300 hover:text-blue-400 transition-colors flex items-center gap-2"
-                      title="Move Selected"
-                    >
-                      <FolderInput className="w-4 h-4" />
-                      <span className="text-sm font-medium hidden sm:inline">
-                        Move
-                      </span>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setBulkTags("");
-                        setShowTagModal(true);
-                      }}
-                      className="p-2 rounded-full hover:bg-vault-700 text-slate-300 hover:text-purple-400 transition-colors flex items-center gap-2"
-                      title="Tag Selected"
-                    >
-                      <Tags className="w-4 h-4" />
-                      <span className="text-sm font-medium hidden sm:inline">
-                        Tag
-                      </span>
-                    </button>
-
-                    <button
-                      onClick={handleBulkDownload}
-                      className="p-2 rounded-full hover:bg-vault-700 text-slate-300 hover:text-green-400 transition-colors flex items-center gap-2"
-                      title="Download Selected"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span className="text-sm font-medium hidden sm:inline">
-                        Download
-                      </span>
-                    </button>
-
-                    <button
-                      onClick={handleBulkDelete}
-                      className="p-2 rounded-full hover:bg-vault-700 text-slate-300 hover:text-red-400 transition-colors flex items-center gap-2"
-                      title="Delete Selected"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      <span className="text-sm font-medium hidden sm:inline">
-                        Delete
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Modals Layer */}
-
-              <ManualModal
-                model={manualModel}
-                initialMode={manualState.mode}
-                onClose={() => setManualState({ id: null, mode: "view" })}
-                onSave={handleUploadManual}
-              />
-
-              {/* Upload Modal */}
-              {showUploadModal && (
-                <div
-                  className={`fixed left-0 top-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
-                    visualViewport.keyboardOpen ? "items-start" : "items-center"
-                  }`}
-                  style={{
-                    width: "100%",
-                    height:
-                      visualViewport.height ||
-                      (typeof window !== "undefined" ? window.innerHeight : 0),
-                    transform: `translate(${visualViewport.offsetLeft}px, ${visualViewport.offsetTop}px)`,
-                  }}
-                >
-                  <div
-                    className="bg-vault-800 border border-vault-600 rounded-xl p-6 w-96 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto"
-                    style={{
-                      maxHeight: Math.max(
-                        240,
-                        (visualViewport.height ||
-                          (typeof window !== "undefined"
-                            ? window.innerHeight
-                            : 0)) - 32,
-                      ),
-                    }}
-                  >
-                    <div className="flex justify-between items-center mb-6">
-                      <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                        <FileUp className="w-5 h-5 text-blue-500" /> Upload
-                        Files
-                      </h3>
-                      <button
-                        onClick={() => setShowUploadModal(false)}
-                        className="text-slate-400 hover:text-white"
-                      >
-                        <X className="w-5 h-5" />
-                      </button>
-                    </div>
-
-                    <form onSubmit={handleConfirmUpload}>
-                      <div className="mb-4 p-3 bg-vault-900/50 rounded-lg border border-vault-700/50">
-                        <p className="text-sm text-slate-300 font-medium">
-                          {pendingFiles.length} files selected
-                        </p>
-                        <p className="text-xs text-slate-500 truncate mt-1">
-                          {pendingFiles.map((f) => f.name).join(", ")}
-                        </p>
-                      </div>
-
-                      <div className="mb-4">
-                        <label className="block text-sm font-medium text-slate-400 mb-1">
-                          Destination Folder
-                        </label>
-                        <select
-                          className="w-full bg-vault-900 border border-vault-700 rounded-md px-3 py-2 text-white focus:border-blue-500 outline-none"
-                          value={uploadFolderId}
-                          onChange={(e) => setUploadFolderId(e.target.value)}
-                        >
-                          <option value="" disabled>
-                            Select a folder...
-                          </option>
-                          {folders.map((folder) => (
-                            <option key={folder.id} value={folder.id}>
-                              {folder.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="mb-6">
-                        <label className="block text-sm font-medium text-slate-400 mb-1">
-                          Add Tags (Optional)
-                        </label>
-                        <input
-                          type="text"
-                          className="w-full bg-vault-900 border border-vault-700 rounded-md px-3 py-2 text-white focus:border-blue-500 outline-none placeholder:text-slate-600"
-                          placeholder="scifi, armor, weapon..."
-                          value={uploadTags}
-                          onChange={(e) => setUploadTags(e.target.value)}
-                        />
-                        <p className="text-xs text-slate-500 mt-1">
-                          Separate tags with commas
-                        </p>
-                      </div>
-
-                      <div className="flex gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setShowUploadModal(false)}
-                          className="flex-1 py-2 rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={!uploadFolderId}
-                          className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Upload
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-              )}
-
-              {/* Import URL Modal */}
-              {showImportModal && (
-                <div
-                  className={`fixed left-0 top-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
-                    visualViewport.keyboardOpen ? "items-start" : "items-center"
-                  }`}
-                  style={{
-                    width: "100%",
-                    height:
-                      visualViewport.height ||
-                      (typeof window !== "undefined" ? window.innerHeight : 0),
-                    transform: `translate(${visualViewport.offsetLeft}px, ${visualViewport.offsetTop}px)`,
-                  }}
-                >
-                  <div
-                    className="bg-vault-800 border border-vault-600 rounded-xl p-6 w-96 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto"
-                    style={{
-                      maxHeight: Math.max(
-                        240,
-                        (visualViewport.height ||
-                          (typeof window !== "undefined"
-                            ? window.innerHeight
-                            : 0)) - 32,
-                      ),
-                    }}
-                  >
-                    <div className="flex justify-between items-center mb-6">
-                      <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                        <Globe className="w-5 h-5 text-indigo-500" /> Import
-                        from URL
-                      </h3>
-                      <button
-                        onClick={() => setShowImportModal(false)}
-                        className="text-slate-400 hover:text-white"
-                      >
-                        <X className="w-5 h-5" />
-                      </button>
-                    </div>
-
-                    <form onSubmit={handleImportSubmit}>
-                      <div className="mb-4">
-                        <label className="block text-sm font-medium text-slate-400 mb-1">
-                          Model URL
-                        </label>
-                        <input
-                          autoFocus
-                          type="url"
-                          required
-                          className="w-full bg-vault-900 border border-vault-700 rounded-md px-3 py-2 text-white focus:border-indigo-500 outline-none placeholder:text-slate-600"
-                          placeholder="https://www.printables.com/model/..."
-                          value={importUrl}
-                          onChange={(e) => setImportUrl(e.target.value)}
-                        />
-                        <p className="text-xs text-slate-500 mt-1">
-                          Paste a link from Printables or similar sites
-                        </p>
-                      </div>
-
-                      <div className="mb-6">
-                        <label className="block text-sm font-medium text-slate-400 mb-1">
-                          Destination Folder
-                        </label>
-                        <select
-                          className="w-full bg-vault-900 border border-vault-700 rounded-md px-3 py-2 text-white focus:border-indigo-500 outline-none"
-                          value={importFolderId}
-                          onChange={(e) => setImportFolderId(e.target.value)}
-                        >
-                          <option value="" disabled>
-                            Select a folder...
-                          </option>
-                          {folders.map((folder) => (
-                            <option key={folder.id} value={folder.id}>
-                              {folder.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="flex gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setShowImportModal(false)}
-                          className="flex-1 py-2 rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={!importUrl || !importFolderId}
-                          className="flex-1 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Import
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-              )}
-
-              {/* Import Options Modal */}
-              {showImportOptionsModal && (
-                <div
-                  className={`fixed left-0 top-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
-                    visualViewport.keyboardOpen ? "items-start" : "items-center"
-                  }`}
-                  style={{
-                    width: "100%",
-                    height:
-                      visualViewport.height ||
-                      (typeof window !== "undefined" ? window.innerHeight : 0),
-                    transform: `translate(${visualViewport.offsetLeft}px, ${visualViewport.offsetTop}px)`,
-                  }}
-                >
-                  <div
-                    className="relative bg-vault-800 border border-vault-600 rounded-xl p-6 w-full lg:w-1/2 shadow-2xl animate-in zoom-in-95 duration-200 "
-                    style={{
-                      maxHeight: Math.max(
-                        240,
-                        (visualViewport.height ||
-                          (typeof window !== "undefined"
-                            ? window.innerHeight
-                            : 0)) - 32,
-                      ),
-                    }}
-                  >
-                    <div className="static flex top-0 justify-between items-center mb-6">
-                      <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                        <Globe className="w-5 h-5 text-indigo-500" /> Select
-                        model to download
-                      </h3>
-                      <button
-                        onClick={() => setShowImportOptionsModal(false)}
-                        className="text-slate-400 hover:text-white"
-                      >
-                        <X className="w-5 h-5" />
-                      </button>
-                    </div>
-
-                    {/* File List */}
-                    <div
-                      className={`static overflow-auto px-2 ${
-                        visualViewport.height > 900 ? "h-[700px]" : "h-[400px]"
-                      }`}
-                    >
-                      {Array.from(folderOptions).map((f) => (
-                        <div>
-                          <div className="text-xl font-medium p-4">
-                            {f ? f : "Root Folder"}
-                          </div>
-                          {modelsOptions.map((model) => (
-                            <div>
-                              {model.folder == f ? (
-                                <div
-                                  key={model.id}
-                                  onClick={() =>
-                                    handleOptionsToggleSelection(model.id)
-                                  }
-                                  className={`group bg-vault-900 border rounded-xl p-4 cursor-pointer transition-all flex items-center gap-4 mb-2 relative overflow-hidden
-                              ${
-                                selectedOptions.has(model.id)
-                                  ? "border-blue-500 ring-1 ring-blue-500/50"
-                                  : "border-vault-700 hover:border-vault-600"
-                              }
-                            `}
-                                >
-                                  <div className="w-12 h-12 bg-blue-900/20 rounded-lg flex items-center justify-center text-blue-500 group-hover:text-blue-400 group-hover:scale-110 transition-all shrink-0">
-                                    <img
-                                      src={model.previewPath}
-                                      alt={model.name}
-                                      className="w-12 h-12 object-contain opacity-80 group-hover:opacity-100 transition-opacity"
-                                    />
-                                  </div>
-
-                                  <div className="min-w-0">
-                                    <h3 className="font-semibold text-slate-200 truncate group-hover:text-white">
-                                      {model.name}
-                                    </h3>
-                                    <p className="text-xs text-slate-500">
-                                      {model.typeName}
-                                    </p>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div></div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-
-                    <div
-                      onClick={() => handleImportChoice()}
-                      className="static bottom-0 p-2 mt-4 cursor-pointer rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors text-center"
-                    >
-                      {" "}
-                      Import{" "}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Delete Confirmation Modal */}
-              {deleteConfirmState.isOpen && (
-                <div
-                  className={`fixed left-0 top-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
-                    visualViewport.keyboardOpen ? "items-start" : "items-center"
-                  }`}
-                  style={{
-                    width: "100%",
-                    height:
-                      visualViewport.height ||
-                      (typeof window !== "undefined" ? window.innerHeight : 0),
-                    transform: `translate(${visualViewport.offsetLeft}px, ${visualViewport.offsetTop}px)`,
-                  }}
-                >
-                  <div
-                    className="bg-vault-800 border border-vault-600 rounded-xl p-6 w-96 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto"
-                    style={{
-                      maxHeight: Math.max(
-                        240,
-                        (visualViewport.height ||
-                          (typeof window !== "undefined"
-                            ? window.innerHeight
-                            : 0)) - 32,
-                      ),
-                    }}
-                  >
-                    <div className="flex flex-col items-center text-center mb-6">
-                      <div className="w-12 h-12 bg-red-900/30 rounded-full flex items-center justify-center mb-4">
-                        <AlertTriangle className="w-6 h-6 text-red-500" />
-                      </div>
-                      <h3 className="text-xl font-bold text-white mb-2">
-                        Confirm Deletion
-                      </h3>
-                      <p className="text-slate-400 text-sm">
-                        {deleteConfirmState.type === "single" &&
-                          "Are you sure you want to delete this model? This action cannot be undone."}
-                        {deleteConfirmState.type === "bulk" &&
-                          `Are you sure you want to delete ${selectedIds.size} models? This action cannot be undone.`}
-                        {deleteConfirmState.type === "folder" &&
-                          "Are you sure you want to delete this folder?"}
-                      </p>
-                    </div>
-
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() =>
-                          setDeleteConfirmState((prev) => ({
-                            ...prev,
-                            isOpen: false,
-                          }))
-                        }
-                        className="flex-1 py-2.5 rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={executeDelete}
-                        className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium transition-colors"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {showMoveModal && (
-                <div
-                  className={`fixed left-0 top-0 z-50 bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
-                    visualViewport.keyboardOpen ? "items-start" : "items-center"
-                  }`}
-                  style={{
-                    width: "100%",
-                    height:
-                      visualViewport.height ||
-                      (typeof window !== "undefined" ? window.innerHeight : 0),
-                    transform: `translate(${visualViewport.offsetLeft}px, ${visualViewport.offsetTop}px)`,
-                  }}
-                >
-                  <div
-                    className="bg-vault-800 border border-vault-600 rounded-xl p-6 w-80 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto"
-                    style={{
-                      maxHeight: Math.max(
-                        200,
-                        (visualViewport.height ||
-                          (typeof window !== "undefined"
-                            ? window.innerHeight
-                            : 0)) - 32,
-                      ),
-                    }}
-                  >
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-white flex items-center gap-2">
-                        <FolderInput className="w-4 h-4" /> Move to Folder
-                      </h3>
-                      <button
-                        onClick={() => setShowMoveModal(false)}
-                        className="text-slate-400 hover:text-white"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="space-y-2 max-h-64 overflow-y-auto mb-4">
+                      <option value="" disabled>
+                        Select a folder...
+                      </option>
                       {folders.map((folder) => (
-                        <button
-                          key={folder.id}
-                          onClick={() => handleBulkMoveSubmit(folder.id)}
-                          className="w-full text-left px-3 py-2 rounded hover:bg-vault-700 text-slate-300 hover:text-white text-sm transition-colors"
-                        >
+                        <option key={folder.id} value={folder.id}>
                           {folder.name}
-                        </button>
+                        </option>
                       ))}
-                    </div>
+                    </select>
                   </div>
-                </div>
-              )}
 
-              {showTagModal && (
-                <div
-                  className={`fixed left-0 top-0 z-50 bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
-                    visualViewport.keyboardOpen ? "items-start" : "items-center"
-                  }`}
-                  style={{
-                    width: "100%",
-                    height:
-                      visualViewport.height ||
-                      (typeof window !== "undefined" ? window.innerHeight : 0),
-                    transform: `translate(${visualViewport.offsetLeft}px, ${visualViewport.offsetTop}px)`,
-                  }}
-                >
-                  <div
-                    className="bg-vault-800 border border-vault-600 rounded-xl p-6 w-96 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto"
-                    style={{
-                      maxHeight: Math.max(
-                        240,
-                        (visualViewport.height ||
-                          (typeof window !== "undefined"
-                            ? window.innerHeight
-                            : 0)) - 32,
-                      ),
-                    }}
-                  >
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-white flex items-center gap-2">
-                        <Tags className="w-4 h-4" /> Add Tags
-                      </h3>
-                      <button
-                        onClick={() => setShowTagModal(false)}
-                        className="text-slate-400 hover:text-white"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <form onSubmit={handleBulkTagSubmit}>
-                      <p className="text-sm text-slate-400 mb-2">
-                        Add tags to {selectedIds.size} items (comma separated):
-                      </p>
-                      <input
-                        autoFocus
-                        type="text"
-                        className="w-full bg-vault-900 border border-vault-700 rounded-md px-3 py-2 text-white focus:border-blue-500 outline-none mb-4"
-                        placeholder="scifi, armor, weapon..."
-                        value={bulkTags}
-                        onChange={(e) => setBulkTags(e.target.value)}
-                      />
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowTagModal(false)}
-                          className="px-3 py-1.5 text-sm text-slate-300 hover:text-white"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded"
-                        >
-                          Add Tags
-                        </button>
-                      </div>
-                    </form>
+                  <div className="mb-6">
+                    <label className="block text-label-md font-label-md text-on-surface-variant mb-1">
+                      Add Tags (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      className={modalInput}
+                      placeholder="scifi, armor, weapon..."
+                      value={uploadTags}
+                      onChange={(e) => setUploadTags(e.target.value)}
+                    />
+                    <p className="text-label-sm text-on-surface-variant mt-1">Separate tags with commas</p>
                   </div>
+
+                  <div className="flex gap-3">
+                    <button type="button" onClick={() => setShowUploadModal(false)} className={`${outlinedBtn} flex-1`}>
+                      Cancel
+                    </button>
+                    <button type="submit" disabled={!uploadFolderId} className={`${primaryBtn} flex-1`}>
+                      Upload
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Import URL Modal */}
+          {showImportModal && (
+            <div
+              className={`fixed left-0 top-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
+                visualViewport.keyboardOpen ? "items-start" : "items-center"
+              }`}
+              style={modalWrapperStyle()}
+            >
+              <div
+                className="bg-surface-container-high border border-outline-variant rounded-xl p-6 w-96 shadow-2xl overflow-y-auto"
+                style={{
+                  maxHeight: Math.max(
+                    240,
+                    (visualViewport.height || (typeof window !== "undefined" ? window.innerHeight : 0)) - 32,
+                  ),
+                }}
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-headline-sm font-headline-sm text-on-surface flex items-center gap-2">
+                    <Icon name="public" className="text-primary" /> Import from URL
+                  </h3>
+                  <button onClick={() => setShowImportModal(false)} className="text-on-surface-variant hover:text-on-surface">
+                    <Icon name="close" />
+                  </button>
                 </div>
-              )}
-            </main>
-          </>
-        )}
-        <Snackbar
-          open={!port ? true : false}
-          autoHideDuration={6000}
-          message="API Host Not Set"
-          anchorOrigin={{ vertical: "top", horizontal: "center" }}
-        >
-          <Alert severity="error" variant="filled" sx={{ width: "100%" }}>
-            API Host Not Set
-          </Alert>
-        </Snackbar>
-      </div>
-    </ThemeProvider>
+
+                <form onSubmit={handleImportSubmit}>
+                  <div className="mb-4">
+                    <label className="block text-label-md font-label-md text-on-surface-variant mb-1">Model URL</label>
+                    <input
+                      autoFocus
+                      type="url"
+                      required
+                      className={modalInput}
+                      placeholder="https://www.printables.com/model/..."
+                      value={importUrl}
+                      onChange={(e) => setImportUrl(e.target.value)}
+                    />
+                    <p className="text-label-sm text-on-surface-variant mt-1">
+                      Paste a link from Printables or similar sites
+                    </p>
+                  </div>
+
+                  <div className="mb-6">
+                    <label className="block text-label-md font-label-md text-on-surface-variant mb-1">
+                      Destination Folder
+                    </label>
+                    <select
+                      className={modalInput}
+                      value={importFolderId}
+                      onChange={(e) => setImportFolderId(e.target.value)}
+                    >
+                      <option value="" disabled>
+                        Select a folder...
+                      </option>
+                      {folders.map((folder) => (
+                        <option key={folder.id} value={folder.id}>
+                          {folder.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button type="button" onClick={() => setShowImportModal(false)} className={`${outlinedBtn} flex-1`}>
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!importUrl || !importFolderId}
+                      className={`${primaryBtn} flex-1`}
+                    >
+                      Import
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Import Options Modal */}
+          {showImportOptionsModal && (
+            <div
+              className={`fixed left-0 top-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
+                visualViewport.keyboardOpen ? "items-start" : "items-center"
+              }`}
+              style={modalWrapperStyle()}
+            >
+              <div
+                className="relative bg-surface-container-high border border-outline-variant rounded-xl p-6 w-full lg:w-1/2 shadow-2xl"
+                style={{
+                  maxHeight: Math.max(
+                    240,
+                    (visualViewport.height || (typeof window !== "undefined" ? window.innerHeight : 0)) - 32,
+                  ),
+                }}
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-headline-sm font-headline-sm text-on-surface flex items-center gap-2">
+                    <Icon name="public" className="text-primary" /> Select model to download
+                  </h3>
+                  <button
+                    onClick={() => setShowImportOptionsModal(false)}
+                    className="text-on-surface-variant hover:text-on-surface"
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
+
+                <div
+                  className={`overflow-auto px-2 ${visualViewport.height > 900 ? "h-[700px]" : "h-[400px]"}`}
+                >
+                  {Array.from(folderOptions).map((f) => (
+                    <div key={f || "root"}>
+                      <div className="text-headline-sm font-headline-sm text-on-surface p-4">
+                        {f ? f : "Root Folder"}
+                      </div>
+                      {modelsOptions.map(
+                        (model) =>
+                          model.folder == f && (
+                            <div
+                              key={model.id}
+                              onClick={() => handleOptionsToggleSelection(model.id)}
+                              className={`group bg-surface-container border rounded-xl p-4 cursor-pointer transition-all flex items-center gap-4 mb-2 relative overflow-hidden ${
+                                selectedOptions.has(model.id)
+                                  ? "border-primary ring-1 ring-primary/50"
+                                  : "border-outline-variant hover:border-outline"
+                              }`}
+                            >
+                              <div className="w-12 h-12 bg-primary-container/20 rounded-lg flex items-center justify-center text-primary group-hover:scale-110 transition-all shrink-0">
+                                <img
+                                  src={model.previewPath}
+                                  alt={model.name}
+                                  className="w-12 h-12 object-contain opacity-80 group-hover:opacity-100 transition-opacity"
+                                />
+                              </div>
+
+                              <div className="min-w-0">
+                                <h3 className="font-semibold text-on-surface truncate">{model.name}</h3>
+                                <p className="text-label-sm text-on-surface-variant">{model.typeName}</p>
+                              </div>
+                            </div>
+                          ),
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <button onClick={() => handleImportChoice()} className={`${primaryBtn} w-full mt-4`}>
+                  Import
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Delete Confirmation Modal */}
+          {deleteConfirmState.isOpen && (
+            <div
+              className={`fixed left-0 top-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
+                visualViewport.keyboardOpen ? "items-start" : "items-center"
+              }`}
+              style={modalWrapperStyle()}
+            >
+              <div
+                className="bg-surface-container-high border border-outline-variant rounded-xl p-6 w-96 shadow-2xl overflow-y-auto"
+                style={{
+                  maxHeight: Math.max(
+                    240,
+                    (visualViewport.height || (typeof window !== "undefined" ? window.innerHeight : 0)) - 32,
+                  ),
+                }}
+              >
+                <div className="flex flex-col items-center text-center mb-6">
+                  <div className="w-12 h-12 bg-error-container/30 rounded-full flex items-center justify-center mb-4">
+                    <Icon name="warning" className="text-2xl text-error" />
+                  </div>
+                  <h3 className="text-headline-sm font-headline-sm text-on-surface mb-2">Confirm Deletion</h3>
+                  <p className="text-on-surface-variant text-body-sm">
+                    {deleteConfirmState.type === "single" &&
+                      "Are you sure you want to delete this model? This action cannot be undone."}
+                    {deleteConfirmState.type === "bulk" &&
+                      `Are you sure you want to delete ${selectedIds.size} models? This action cannot be undone.`}
+                    {deleteConfirmState.type === "folder" && "Are you sure you want to delete this folder?"}
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setDeleteConfirmState((prev) => ({ ...prev, isOpen: false }))}
+                    className={`${outlinedBtn} flex-1`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={executeDelete}
+                    className="flex-1 bg-error text-on-error rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 font-bold transition-transform active:scale-95"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showMoveModal && (
+            <div
+              className={`fixed left-0 top-0 z-50 bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
+                visualViewport.keyboardOpen ? "items-start" : "items-center"
+              }`}
+              style={modalWrapperStyle()}
+            >
+              <div
+                className="bg-surface-container-high border border-outline-variant rounded-xl p-6 w-80 shadow-2xl overflow-y-auto"
+                style={{
+                  maxHeight: Math.max(
+                    200,
+                    (visualViewport.height || (typeof window !== "undefined" ? window.innerHeight : 0)) - 32,
+                  ),
+                }}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-on-surface flex items-center gap-2">
+                    <Icon name="drive_file_move" className="text-lg" /> Move to Folder
+                  </h3>
+                  <button onClick={() => setShowMoveModal(false)} className="text-on-surface-variant hover:text-on-surface">
+                    <Icon name="close" className="text-lg" />
+                  </button>
+                </div>
+                <div className="space-y-1 max-h-64 overflow-y-auto mb-4">
+                  {folders.map((folder) => (
+                    <button
+                      key={folder.id}
+                      onClick={() => handleBulkMoveSubmit(folder.id)}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-surface-container-highest text-on-surface-variant hover:text-on-surface text-body-sm transition-colors"
+                    >
+                      {folder.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showTagModal && (
+            <div
+              className={`fixed left-0 top-0 z-50 bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
+                visualViewport.keyboardOpen ? "items-start" : "items-center"
+              }`}
+              style={modalWrapperStyle()}
+            >
+              <div
+                className="bg-surface-container-high border border-outline-variant rounded-xl p-6 w-96 shadow-2xl overflow-y-auto"
+                style={{
+                  maxHeight: Math.max(
+                    240,
+                    (visualViewport.height || (typeof window !== "undefined" ? window.innerHeight : 0)) - 32,
+                  ),
+                }}
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-on-surface flex items-center gap-2">
+                    <Icon name="sell" className="text-lg" /> Add Tags
+                  </h3>
+                  <button onClick={() => setShowTagModal(false)} className="text-on-surface-variant hover:text-on-surface">
+                    <Icon name="close" className="text-lg" />
+                  </button>
+                </div>
+                <form onSubmit={handleBulkTagSubmit}>
+                  <p className="text-body-sm text-on-surface-variant mb-2">
+                    Add tags to {selectedIds.size} items (comma separated):
+                  </p>
+                  <input
+                    autoFocus
+                    type="text"
+                    className={`${modalInput} mb-4`}
+                    placeholder="scifi, armor, weapon..."
+                    value={bulkTags}
+                    onChange={(e) => setBulkTags(e.target.value)}
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button type="button" onClick={() => setShowTagModal(false)} className="px-3 py-1.5 text-body-sm text-on-surface-variant hover:text-on-surface">
+                      Cancel
+                    </button>
+                    <button type="submit" className="px-3 py-1.5 text-body-sm bg-primary-container text-on-primary-container rounded-lg font-bold">
+                      Add Tags
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </main>
+      )}
+
+      {!port && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[80] bg-error-container text-on-error-container px-4 py-2 rounded-xl shadow-2xl text-body-sm font-body-sm flex items-center gap-2">
+          <Icon name="error" /> API Host Not Set
+        </div>
+      )}
+    </div>
   );
 };
 

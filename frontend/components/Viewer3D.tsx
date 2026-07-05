@@ -19,17 +19,9 @@ import {
 } from "@react-three/drei";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { ThreeMFLoader } from "three/examples/jsm/loaders/3MFLoader.js";
-import {
-  Maximize,
-  Minimize,
-  FileWarning,
-  Rotate3d,
-  Orbit,
-  GalleryVerticalEnd,
-} from "lucide-react";
 import * as THREE from "three";
 import { LoadStep } from "./STEPLoader";
-import Button from "@mui/material/Button";
+import Icon from "./Icon";
 
 let API_BASE_URL = "";
 
@@ -101,7 +93,11 @@ const Model = ({
 
   // Use the appropriate loader
   const urlpath = API_BASE_URL + url;
-  let data = useLoader(Loader as any, urlpath);
+  // Model files are served behind the auth-gated API, so the loader's
+  // internal XHR needs to carry the session cookie cross-origin.
+  let data = useLoader(Loader as any, urlpath, (loader: any) =>
+    loader.setWithCredentials(true),
+  );
 
   const modelObject = useMemo(() => {
     if (ext == "3mf") {
@@ -364,11 +360,7 @@ const Viewer3D: React.FC<Viewer3DProps> = ({
           className="bg-black/50 hover:bg-black/70 text-white p-2 rounded-lg backdrop-blur-sm transition-colors"
           title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
         >
-          {isFullscreen ? (
-            <Minimize className="w-5 h-5" />
-          ) : (
-            <Maximize className="w-5 h-5" />
-          )}
+          <Icon name={isFullscreen ? "close_fullscreen" : "open_in_full"} className="text-xl" />
         </button>
       </div>
       <div className="absolute bottom-10 right-4 opacity-100 transition-opacity duration-300">
@@ -377,7 +369,7 @@ const Viewer3D: React.FC<Viewer3DProps> = ({
           className="bg-black/50 hover:bg-black/70 text-white p-2 rounded-lg backdrop-blur-sm transition-colors"
           title={isFullscreen ? "Orbit Control" : "Free Rotate"}
         >
-          {orbitMode ? <Rotate3d /> : <Orbit />}
+          <Icon name={orbitMode ? "3d_rotation" : "orbit"} className="text-xl" />
         </button>
       </div>
       <div className="absolute bottom-4 right-4 bg-black/50 px-3 py-1 rounded text-xs text-slate-300 pointer-events-none">
@@ -385,17 +377,14 @@ const Viewer3D: React.FC<Viewer3DProps> = ({
       </div>
       {editing ? (
         <div className="absolute top-4 px-4 ">
-          <Button
-            fullWidth
+          <button
             onClick={() => {
               setUpdateThumb(true);
             }}
-            startIcon={<GalleryVerticalEnd />}
-            variant="contained"
-            color="secondary"
+            className="w-full bg-secondary text-on-secondary rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 font-bold transition-transform active:scale-95"
           >
-            Generate Thumbnail
-          </Button>
+            <Icon name="view_carousel" className="text-lg" /> Generate Thumbnail
+          </button>
         </div>
       ) : (
         <div></div>

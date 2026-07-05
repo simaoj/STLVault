@@ -16,7 +16,7 @@ export async function LoadStep(fileUrl) {
     },
   });
 
-  let response = await fetch(fileUrl);
+  let response = await fetch(fileUrl, { credentials: "include" });
   let buffer = await response.arrayBuffer();
 
   // read the imported step file

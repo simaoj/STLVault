@@ -1,36 +1,10 @@
 import React, { useState, useCallback, useRef } from "react";
 import { STLModel } from "../types";
 import Viewer3D from "./Viewer3D";
-import {
-  X,
-  Download,
-  Tag as TagIcon,
-  Sparkles,
-  Save,
-  Edit,
-  Trash2,
-  Calendar,
-  HardDrive,
-  FileUp,
-  RefreshCw,
-  AlertTriangle,
-  ScreenShareIcon,
-  BookOpen,
-} from "lucide-react";
+import Icon from "./Icon";
 
 import { generateThumbnail } from "../services/thumbnailGenerator";
 import { api } from "../services/api";
-import { Typography } from "@mui/material";
-import Button from "@mui/material/Button";
-import Stack from "@mui/material/Stack";
-import Divider from "@mui/material/Divider";
-import OutlinedInput from "@mui/material/OutlinedInput";
-import TextField from "@mui/material/TextField";
-import Badge from "@mui/material/Badge";
-import Chip from "@mui/material/Chip";
-import Grid from "@mui/material/Grid";
-import IconButton from "@mui/material/IconButton";
-import Tooltip from "@mui/material/Tooltip";
 
 interface DetailPanelProps {
   model: STLModel | null;
@@ -39,9 +13,14 @@ interface DetailPanelProps {
   onDelete: (id: string) => void;
   onOpenManual: (model: STLModel) => void;
   onEditManual: (model: STLModel) => void;
-  onUploadManual: (id: string, file: File) => void | Promise<void>;
+  onUploadManual: (id: string, file: File) => unknown | Promise<unknown>;
   onDeleteManual: (id: string) => void | Promise<void>;
 }
+
+const primaryBtn =
+  "bg-primary-container text-on-primary-container rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 font-bold transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed";
+const outlinedBtn =
+  "border border-outline-variant text-on-surface hover:bg-surface-container-highest rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 
 const DetailPanel: React.FC<DetailPanelProps> = ({
   model,
@@ -59,15 +38,15 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   const [editDesc, setEditDesc] = useState("");
   const [editTags, setEditTags] = useState("");
   const [tempThumb, setTempThumb] = useState("");
-  const [errorState, setErrorState] = useState<{
-    show: boolean;
-    message: string;
-  }>({ show: false, message: "" });
+  const [errorState, setErrorState] = useState<{ show: boolean; message: string }>({
+    show: false,
+    message: "",
+  });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const thumbInputRef = useRef<HTMLInputElement>(null);
   const manualInputRef = useRef<HTMLInputElement>(null);
 
-  // Reset local state when model changes
   React.useEffect(() => {
     if (model) {
       setEditName(model.name);
@@ -91,15 +70,14 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
 
   if (!model) return null;
 
+  const getExtension = (filename: string) => {
+    const parts = filename.split(".");
+    return parts.length > 1 ? parts.pop()?.toLowerCase() : "";
+  };
+
   const handleReplaceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !model) return;
-
-    // Extension check
-    const getExtension = (filename: string) => {
-      const parts = filename.split(".");
-      return parts.length > 1 ? parts.pop()?.toLowerCase() : "";
-    };
 
     const currentExt = getExtension(model.name);
     const newExt = getExtension(file.name);
@@ -115,7 +93,6 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
 
     setIsReplacing(true);
     try {
-      // Generate thumbnail
       let thumb: string | undefined;
       try {
         thumb = await generateThumbnail(file);
@@ -129,7 +106,6 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         size: updated.size,
         thumbnail: updated.thumbnail,
       });
-      // Note: The name and other metadata are preserved unless the user explicitly changes them in the text fields
     } catch (e) {
       console.error("Failed to replace", e);
       alert("Failed to replace file");
@@ -139,9 +115,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     }
   };
 
-  const handleReplaceThumbnail = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
+  const handleReplaceThumbnail = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !model) return;
 
@@ -153,13 +127,12 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         size: updated.size,
         thumbnail: updated.thumbnail,
       });
-      // Note: The name and other metadata are preserved unless the user explicitly changes them in the text fields
     } catch (e) {
       console.error("Failed to replace", e);
       alert("Failed to replace file");
     } finally {
       setIsReplacing(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (thumbInputRef.current) thumbInputRef.current.value = "";
     }
   };
 
@@ -167,9 +140,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     setTempThumb(dataurl);
   };
 
-  const handleManualUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
+  const handleManualUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !model) return;
     try {
@@ -180,52 +151,36 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   };
 
   const handleSave = () => {
-    const getExtension = (filename: string) => {
-      const parts = filename.split(".");
-      return parts.length > 1 ? parts.pop()?.toLowerCase() : "";
-    };
-
     const currentExt = getExtension(model.name);
     const editExt = getExtension(editName);
-    let newName = "";
-    if (editExt != currentExt) {
-      newName = editName + "." + currentExt;
-    } else {
-      newName = editName;
-    }
+    const newName = editExt !== currentExt ? `${editName}.${currentExt}` : editName;
 
     const newTags = editTags
       .split(",")
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
 
-    if (tempThumb != "") {
-      onUpdate(model.id, {
-        name: newName,
-        description: editDesc,
-        tags: newTags,
-        thumbnail: tempThumb,
-      });
+    if (tempThumb !== "") {
+      onUpdate(model.id, { name: newName, description: editDesc, tags: newTags, thumbnail: tempThumb });
     } else {
-      onUpdate(model.id, {
-        name: newName,
-        description: editDesc,
-        tags: newTags,
-      });
+      onUpdate(model.id, { name: newName, description: editDesc, tags: newTags });
     }
 
     setIsEditing(false);
   };
 
   return (
-    <div className="w-screen sm:w-96 border-l border-vault-700 bg-black flex flex-col h-full shadow-2xl z-20 relative">
+    <div className="w-screen sm:w-96 border-l border-outline-variant bg-surface-container-low flex flex-col h-full shadow-2xl z-20 relative">
       {/* Header */}
-
-      <div className="p-4 border-b border-vault-700 flex justify-between items-center">
-        <Typography variant="h6">Model Details</Typography>
-        <Button onClick={onClose} variant="outlined" color="primary">
-          <X />
-        </Button>
+      <div className="p-4 border-b border-outline-variant flex justify-between items-center shrink-0">
+        <h2 className="text-headline-sm font-headline-sm text-on-surface">Model Details</h2>
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="w-9 h-9 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors"
+        >
+          <Icon name="close" />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
@@ -242,135 +197,86 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
         </div>
 
         {/* Actions */}
-        <Stack
-          direction="row"
-          spacing={1}
-          sx={{
-            justifyContent: "space-between",
-            alignItems: "center",
-            minWidth: 0,
-          }}
-        >
-          <Button
-            fullWidth
+        <div className="flex gap-2">
+          <a
             href={api.getDownloadUrl(model)}
             download={model.name}
-            variant="contained"
-            startIcon={<Download />}
+            className={`${primaryBtn} flex-1`}
           >
-            Download
-          </Button>
-
-          <Button
-            fullWidth
-            href={api.getSlicerUrl(model)}
-            variant="outlined"
-            startIcon={<ScreenShareIcon />}
-          >
-            <Typography noWrap variant="subtitle2">
-              Open in Slicer
-            </Typography>
-          </Button>
-        </Stack>
+            <Icon name="download" className="text-lg" /> Download
+          </a>
+          <a href={api.getSlicerUrl(model)} className={`${outlinedBtn} flex-1`}>
+            <Icon name="ios_share" className="text-lg" />
+            <span className="truncate">Open in Slicer</span>
+          </a>
+        </div>
 
         {/* Info Form */}
         <div className="space-y-4">
           <div>
-            <Typography variant="h6" gutterBottom>
-              Name
-            </Typography>
+            <h3 className="text-headline-sm font-headline-sm text-on-surface mb-1">Name</h3>
             {isEditing ? (
-              <OutlinedInput
-                fullWidth
+              <input
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
+                className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
               />
             ) : (
-              <Typography variant="body1" sx={{ color: "text.secondary" }}>
-                {model.name}
-              </Typography>
+              <p className="text-body-md font-body-md text-on-surface-variant break-words">{model.name}</p>
             )}
           </div>
 
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Filename: <br></br>
+          <p className="text-body-sm font-body-sm text-on-surface-variant">
+            Filename:
+            <br />
             {model.id}.{model.name.split(".").pop()}
-          </Typography>
-          <Divider />
-          <div>
-            <Typography variant="body1" gutterBottom>
-              Description
-            </Typography>
+          </p>
+          <div className="h-px bg-outline-variant" />
 
+          <div>
+            <p className="text-body-md font-body-md text-on-surface mb-1">Description</p>
             {isEditing ? (
-              <TextField
-                fullWidth
+              <textarea
                 value={editDesc}
                 onChange={(e) => setEditDesc(e.target.value)}
                 placeholder="Add a description..."
-                multiline
+                className="w-full min-h-[80px] bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all resize-none"
               />
             ) : (
-              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              <p className="text-body-sm font-body-sm text-on-surface-variant">
                 {model.description || "No Description"}
-              </Typography>
+              </p>
             )}
           </div>
-          <Divider />
+          <div className="h-px bg-outline-variant" />
 
           <div>
-            <Typography variant="body1" gutterBottom>
-              Manual
-            </Typography>
-
+            <p className="text-body-md font-body-md text-on-surface mb-2">Manual</p>
             {isEditing ? (
               model.manual ? (
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  sx={{ alignItems: "center", minWidth: 0 }}
-                >
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      color: "text.secondary",
-                      flex: 1,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
+                <div className="flex items-center gap-2 min-w-0">
+                  <p className="text-body-sm font-body-sm text-on-surface-variant flex-1 truncate">
                     {model.manual}
-                  </Typography>
-                  <Tooltip title="Edit manual">
-                    <IconButton
-                      size="small"
-                      onClick={() => onEditManual(model)}
-                      aria-label="edit manual"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Delete manual">
-                    <IconButton
-                      size="small"
-                      color="error"
-                      onClick={() => onDeleteManual(model.id)}
-                      aria-label="delete manual"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </IconButton>
-                  </Tooltip>
-                </Stack>
-              ) : (
-                <Stack direction="column" spacing={1}>
-                  <Button
-                    fullWidth
-                    component="label"
-                    variant="contained"
-                    startIcon={<FileUp />}
+                  </p>
+                  <button
+                    onClick={() => onEditManual(model)}
+                    aria-label="Edit manual"
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-highest transition-colors"
                   >
-                    Upload Manual
+                    <Icon name="edit" className="text-lg" />
+                  </button>
+                  <button
+                    onClick={() => onDeleteManual(model.id)}
+                    aria-label="Delete manual"
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-surface-container-highest transition-colors"
+                  >
+                    <Icon name="delete" className="text-lg" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <label className={`${primaryBtn} cursor-pointer`}>
+                    <Icon name="upload_file" className="text-lg" /> Upload Manual
                     <input
                       type="file"
                       ref={manualInputRef}
@@ -378,282 +284,164 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                       accept=".md,.markdown,text/markdown"
                       onChange={handleManualUpload}
                     />
-                  </Button>
-                  <Button
-                    fullWidth
-                    variant="outlined"
-                    startIcon={<Edit />}
-                    onClick={() => onEditManual(model)}
-                  >
-                    Or paste
-                  </Button>
-                </Stack>
+                  </label>
+                  <button onClick={() => onEditManual(model)} className={outlinedBtn}>
+                    <Icon name="edit" className="text-lg" /> Or paste
+                  </button>
+                </div>
               )
             ) : model.manual ? (
-              <Button
-                fullWidth
-                onClick={() => onOpenManual(model)}
-                variant="outlined"
-                startIcon={<BookOpen />}
-              >
-                Open Manual
-              </Button>
+              <button onClick={() => onOpenManual(model)} className={`${outlinedBtn} w-full`}>
+                <Icon name="menu_book" className="text-lg" /> Open Manual
+              </button>
             ) : (
-              <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                No manual
-              </Typography>
+              <p className="text-body-sm font-body-sm text-on-surface-variant">No manual</p>
             )}
           </div>
-          <Divider />
+          <div className="h-px bg-outline-variant" />
 
-          <Typography variant="subtitle1">Metadata</Typography>
+          <p className="text-label-md font-label-md text-on-surface-variant uppercase tracking-widest">
+            Metadata
+          </p>
 
           <div className="space-y-3">
-            {/* Quick Stats Grid */}
-            <div className="grid grid-cols-2 gap-3 p-3 rounded-md border border-vault-700/50 -mt-2">
-              <div className="col-span-2">
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  sx={{
-                    justifyContent: "flex-start",
-                    alignItems: "center",
-                    minWidth: 0,
-                  }}
-                >
-                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                    Tags:
-                  </Typography>
-                  {isEditing ? (
-                    <TextField
-                      fullWidth
-                      value={editTags}
-                      onChange={(e) => setEditTags(e.target.value)}
-                      placeholder="scifi, armor, character..."
-                      multiline
-                    />
-                  ) : (
-                    <Grid container spacing={1} columns={12}>
-                      {model.tags.length > 0 ? (
-                        model.tags.map((tag) => (
-                          <Grid
-                            display="flex"
-                            justifyContent="center"
-                            alignItems="center"
-                            size="auto"
-                          >
-                            <Chip
-                              size="small"
-                              key={tag}
-                              label={tag}
-                              icon={<TagIcon className="w-4 pl-1" />}
-                            ></Chip>
-                          </Grid>
-                        ))
-                      ) : (
-                        <span className="text-slate-600 italic text-sm">
-                          No tags
-                        </span>
-                      )}
-                    </Grid>
-                  )}
-                </Stack>
+            <div className="p-3 rounded-lg border border-outline-variant space-y-3">
+              <div>
+                <p className="text-body-sm font-body-sm text-on-surface-variant mb-2">Tags</p>
+                {isEditing ? (
+                  <input
+                    value={editTags}
+                    onChange={(e) => setEditTags(e.target.value)}
+                    placeholder="scifi, armor, character..."
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                  />
+                ) : model.tags.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {model.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="bg-primary/10 text-primary px-3 py-0.5 rounded-full text-label-sm font-label-sm flex items-center gap-1"
+                      >
+                        <Icon name="sell" className="text-sm" />
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-on-surface-variant/60 italic text-body-sm">No tags</span>
+                )}
               </div>
-              <Divider className="col-span-2" />
-
-              <div className="space-y-1">
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  sx={{
-                    justifyContent: "flex-start",
-                    alignItems: "baseline",
-                    minWidth: 0,
-                  }}
-                >
-                  <Calendar className="w-3 h-3" />
-                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                    Added:
-                  </Typography>
-                  <Typography variant="caption">
-                    {new Date(model.dateAdded).toLocaleDateString()}
-                  </Typography>
-                </Stack>
+              <div className="h-px bg-outline-variant" />
+              <div className="flex items-center gap-2 text-on-surface-variant">
+                <Icon name="calendar_today" className="text-sm" />
+                <span className="text-body-sm">Added:</span>
+                <span className="text-label-sm">{new Date(model.dateAdded).toLocaleDateString()}</span>
               </div>
-              <div className="space-y-1">
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  sx={{
-                    justifyContent: "flex-start",
-                    alignItems: "baseline",
-                    minWidth: 0,
-                  }}
-                >
-                  <HardDrive className="w-3 h-3" />
-                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                    File Size:
-                  </Typography>
-                  <Typography variant="caption">
-                    {(model.size / (1024 * 1024)).toFixed(2)} MB
-                  </Typography>
-                </Stack>
+              <div className="flex items-center gap-2 text-on-surface-variant">
+                <Icon name="hard_drive" className="text-sm" />
+                <span className="text-body-sm">File Size:</span>
+                <span className="text-label-sm">{(model.size / (1024 * 1024)).toFixed(2)} MB</span>
               </div>
             </div>
-            <Divider />
+            <div className="h-px bg-outline-variant" />
 
-            {/* File Replacement Section (Edit Mode Only) */}
             {isEditing && (
-              <div className="pb-3 border-b border-vault-700 mb-3">
-                <Typography variant="h6" gutterBottom>
-                  File editing:
-                </Typography>
+              <div className="pb-3 border-b border-outline-variant mb-3 space-y-3">
+                <h3 className="text-headline-sm font-headline-sm text-on-surface">File editing</h3>
 
-                <Typography variant="body1">Source File:</Typography>
-                <Typography
-                  variant="body2"
-                  sx={{ color: "text.secondary" }}
-                  gutterBottom
-                >
-                  {model.id}.{model.name.split(".").pop()}
-                </Typography>
-                <div className="flex items-center gap-2 mb-4">
-                  <Button
-                    fullWidth
-                    disabled={isReplacing}
-                    component="label"
-                    variant="contained"
-                    startIcon={!isReplacing ? <FileUp /> : <RefreshCw />}
-                  >
-                    {isReplacing ? "Uploading..." : "Replace 3D Model File"}
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      className="hidden"
-                      accept=".stl,.step,.stp,.3mf"
-                      onChange={handleReplaceFile}
-                    />
-                  </Button>
+                <div>
+                  <p className="text-body-md font-body-md text-on-surface">Source File</p>
+                  <p className="text-body-sm font-body-sm text-on-surface-variant">
+                    {model.id}.{model.name.split(".").pop()}
+                  </p>
                 </div>
+                <label className={`${primaryBtn} cursor-pointer ${isReplacing ? "opacity-50 pointer-events-none" : ""}`}>
+                  <Icon name={isReplacing ? "autorenew" : "upload_file"} className="text-lg" />
+                  {isReplacing ? "Uploading..." : "Replace 3D Model File"}
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    accept=".stl,.step,.stp,.3mf"
+                    onChange={handleReplaceFile}
+                  />
+                </label>
 
-                <Typography variant="body1" gutterBottom>
-                  Thumbnail:
-                </Typography>
-                <Stack direction="column" spacing={1}>
-                  <div className="w-full object-cover mb-4 ">
-                    <img
-                      className="h-60 w-60 mx-auto rounded-md"
-                      src={tempThumb != "" ? tempThumb : model.thumbnail}
-                      alt="thumbnail"
-                    />
-                  </div>
-                  <Button
-                    disabled={isReplacing}
-                    component="label"
-                    variant="contained"
-                    startIcon={!isReplacing ? <FileUp /> : <RefreshCw />}
-                  >
-                    {isReplacing ? "Uploading..." : "Replace Thumbnail"}
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      className="hidden"
-                      accept=".jpeg,.png,.jpg"
-                      onChange={handleReplaceThumbnail}
-                    />
-                  </Button>
-                  <Button
-                    disabled={isReplacing}
-                    onClick={() => {
-                      setTempThumb("");
-                    }}
-                    component="label"
-                    variant="contained"
-                    color="warning"
-                    startIcon={<X />}
-                  >
-                    Clear Generated Thumbnail
-                  </Button>
-                </Stack>
+                <p className="text-body-md font-body-md text-on-surface">Thumbnail</p>
+                <div className="w-full flex justify-center">
+                  <img
+                    className="h-48 w-48 rounded-lg object-cover bg-surface-container-highest"
+                    src={tempThumb !== "" ? tempThumb : model.thumbnail}
+                    alt="thumbnail"
+                  />
+                </div>
+                <label className={`${primaryBtn} cursor-pointer ${isReplacing ? "opacity-50 pointer-events-none" : ""}`}>
+                  <Icon name={isReplacing ? "autorenew" : "upload_file"} className="text-lg" />
+                  {isReplacing ? "Uploading..." : "Replace Thumbnail"}
+                  <input
+                    type="file"
+                    ref={thumbInputRef}
+                    className="hidden"
+                    accept=".jpeg,.png,.jpg"
+                    onChange={handleReplaceThumbnail}
+                  />
+                </label>
+                <button
+                  disabled={isReplacing}
+                  onClick={() => setTempThumb("")}
+                  className={`${outlinedBtn} w-full text-error border-error/40`}
+                >
+                  <Icon name="close" className="text-lg" /> Clear Generated Thumbnail
+                </button>
               </div>
             )}
 
             {isEditing && (
               <div className="flex gap-2 pt-2">
-                <Button
-                  fullWidth
-                  onClick={handleSave}
-                  startIcon={<Save />}
-                  variant="contained"
-                  color="success"
-                >
-                  Save Changes
-                </Button>
-                <Button
-                  fullWidth
-                  onClick={() => setIsEditing(false)}
-                  variant="contained"
-                  color="secondary"
-                >
+                <button onClick={handleSave} className={`${primaryBtn} flex-1`}>
+                  <Icon name="save" className="text-lg" /> Save Changes
+                </button>
+                <button onClick={() => setIsEditing(false)} className={`${outlinedBtn} flex-1`}>
                   Cancel
-                </Button>
+                </button>
               </div>
             )}
           </div>
         </div>
 
-        <Stack
-          direction="column"
-          spacing={1}
-          sx={{
-            justifyContent: "space-between",
-            alignItems: "center",
-            minWidth: 0,
-          }}
-        >
+        <div className="space-y-3">
           {!isEditing && (
-            <Button
-              fullWidth
-              onClick={() => setIsEditing(true)}
-              variant="outlined"
-              endIcon={<Edit />}
-            >
-              Edit
-            </Button>
+            <button onClick={() => setIsEditing(true)} className={`${outlinedBtn} w-full`}>
+              <Icon name="edit" className="text-lg" /> Edit
+            </button>
           )}
-          <Divider />
-          <Typography variant="h6" color="error" gutterBottom>
-            Warning Zone
-          </Typography>
-
-          <Button
-            fullWidth
+          <div className="h-px bg-outline-variant" />
+          <h3 className="text-headline-sm font-headline-sm text-error">Warning Zone</h3>
+          <button
             onClick={() => onDelete(model.id)}
-            endIcon={<Trash2 />}
-            color="error"
-            variant="contained"
+            className="w-full bg-error text-on-error rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 font-bold transition-transform active:scale-95"
           >
-            Delete Model
-          </Button>
-        </Stack>
+            <Icon name="delete" className="text-lg" /> Delete Model
+          </button>
+        </div>
 
         {/* Error Modal Overlay */}
         {errorState.show && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-6 animate-in fade-in duration-200">
-            <div className="bg-vault-800 border border-red-500/50 rounded-xl shadow-2xl w-full animate-in zoom-in-95 duration-200 p-5">
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-6">
+            <div className="bg-surface-container-high border border-error/50 rounded-xl shadow-2xl w-full p-5">
               <div className="flex flex-col items-center text-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-red-900/30 flex items-center justify-center">
-                  <AlertTriangle className="w-6 h-6 text-red-500" />
+                <div className="w-12 h-12 rounded-full bg-error-container/30 flex items-center justify-center">
+                  <Icon name="warning" className="text-2xl text-error" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-white">File Mismatch</h3>
-                  <p className="text-sm text-slate-300 mt-2 leading-relaxed">
+                  <h3 className="font-bold text-on-surface">File Mismatch</h3>
+                  <p className="text-body-sm font-body-sm text-on-surface-variant mt-2 leading-relaxed">
                     {errorState.message}
                   </p>
                 </div>
                 <button
                   onClick={() => setErrorState({ show: false, message: "" })}
-                  className="w-full mt-2 py-2 bg-vault-700 hover:bg-vault-600 text-white rounded-lg text-sm font-medium transition-colors"
+                  className={`${outlinedBtn} w-full mt-2`}
                 >
                   Okay, got it
                 </button>

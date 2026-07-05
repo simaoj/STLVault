@@ -9,12 +9,19 @@ export default defineConfig(({ mode }) => {
     fs.readFileSync(new URL("./package.json", import.meta.url), "utf-8"),
   );
   const appVersion = pkgJson.version || "dev";
-  const API_URL = "TERA_API_URL";
+  // In the Docker image these placeholders are swapped for real values by
+  // frontend/env.sh at container start (see docker-compose.yml). Locally
+  // (npm run dev / vite build outside Docker), no .env there is copied into
+  // the image, so this falls back to the placeholder for that flow — set
+  // VITE_API_URL / VITE_APP_URL in a frontend/.env.local to point at your
+  // own backend during local development instead.
+  const API_URL = env.VITE_API_URL || "TERA_API_URL";
+  const APP_URL = env.VITE_APP_URL || "TERA_APP_URL";
   return {
     base: "/",
     preview: {
       port: 5173,
-      allowedHosts: ["TERA_APP_URL"],
+      allowedHosts: [APP_URL],
     },
     server: {
       port: 5173,
