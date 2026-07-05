@@ -17,20 +17,30 @@ export default defineConfig(({ mode }) => {
   // own backend during local development instead.
   const API_URL = env.VITE_API_URL || "TERA_API_URL";
   // Comma-separated list of hosts the frontend is reachable at (e.g. a LAN
-  // hostname alongside localhost), so Vite's allowedHosts can list them all.
-  const APP_URL = (env.VITE_APP_URL || "TERA_APP_URL")
+  // hostname alongside localhost). allowedHosts needs bare hostnames, so
+  // strip any scheme/port off each entry.
+  const toHostname = (value: string): string => {
+    try {
+      return new URL(value.includes("://") ? value : `http://${value}`).hostname;
+    } catch {
+      return value;
+    }
+  };
+  const APP_HOSTS = (env.VITE_APP_URL || "TERA_APP_URL")
     .split(",")
     .map((url) => url.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map(toHostname);
   return {
     base: "/",
     preview: {
       port: 5173,
-      allowedHosts: APP_URL,
+      allowedHosts: APP_HOSTS,
     },
     server: {
       port: 5173,
       host: "0.0.0.0",
+      allowedHosts: APP_HOSTS,
     },
     define: {
       "import.meta.env.VITE_APP_TAG": JSON.stringify(appVersion),
