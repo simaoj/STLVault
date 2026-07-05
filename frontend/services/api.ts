@@ -100,12 +100,14 @@ export const api = {
     folderId: string,
     thumbnail?: string,
     tags: string[] = [],
+    displayName?: string,
   ): Promise<STLModel> => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("folderId", folderId);
     if (thumbnail) formData.append("thumbnail", thumbnail); // Send base64 thumbnail
     if (tags.length > 0) formData.append("tags", JSON.stringify(tags));
+    if (displayName) formData.append("displayName", displayName);
 
     const res = await authFetch(`${API_BASE_URL}/models/upload`, {
       method: "POST",

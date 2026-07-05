@@ -122,7 +122,7 @@ const ManualModal: React.FC<ManualModalProps> = ({
       >
         <div className="flex justify-between items-center gap-3 p-5 border-b border-outline-variant sticky top-0 bg-surface-container-high rounded-t-xl">
           <div className="flex items-center gap-2 min-w-0 flex-1">
-            <h3 className="text-headline-sm font-headline-sm text-on-surface truncate">{model.name}</h3>
+            <h3 className="text-headline-sm font-headline-sm text-on-surface truncate">{model.displayName}</h3>
             {mode === "view" ? (
               <button
                 onClick={() => setMode("edit")}

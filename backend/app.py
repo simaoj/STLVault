@@ -31,6 +31,10 @@ UPLOAD_DIR = Path(os.getenv("FILE_STORAGE", "./app/uploads"))
 MANUAL_DIR = Path(os.getenv("MANUAL_STORAGE", UPLOAD_DIR / "manuals"))
 MANUAL_DIR.mkdir(parents=True, exist_ok=True)
 WEBUI_URL = os.getenv("WEBUI_URL", "http://localhost:8989")
+# WEBUI_URL may be a comma-separated list (e.g. a LAN hostname alongside
+# localhost), so CORS can allow the frontend regardless of which one it's
+# accessed through.
+WEBUI_URLS = [u.strip() for u in WEBUI_URL.split(",") if u.strip()]
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
@@ -54,8 +58,8 @@ app = FastAPI(title="STLVault API")
 app.add_middleware(
     CORSMiddleware,
     # Wildcard origins can't be combined with credentialed (cookie) requests,
-    # so this must be the exact frontend origin rather than "*".
-    allow_origins=[WEBUI_URL],
+    # so these must be the exact frontend origin(s) rather than "*".
+    allow_origins=WEBUI_URLS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -85,7 +89,7 @@ def login(payload: LoginPayload, response: Response):
         value=token,
         httponly=True,
         samesite="lax",
-        secure=WEBUI_URL.startswith("https"),
+        secure=all(u.startswith("https") for u in WEBUI_URLS),
         max_age=60 * 60 * 24 * 30,
         path="/",
     )
@@ -143,6 +147,10 @@ def init_db():
         cur.execute("ALTER TABLE models ADD COLUMN manual TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        cur.execute("ALTER TABLE models ADD COLUMN displayName TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
     # seed folders if empty
@@ -171,6 +179,10 @@ def row_to_folder(row: sqlite3.Row) -> Dict[str, Any]:
     return {"id": row["id"], "name": row["name"], "parentId": row["parentId"]}
 
 
+def default_display_name(filename: str) -> str:
+    return os.path.splitext(filename)[0]
+
+
 def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:
     tags = []
     if row["tags"]:
@@ -178,9 +190,11 @@ def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:
             tags = json.loads(row["tags"])
         except Exception:
             tags = []
+    display_name = row["displayName"] if "displayName" in row.keys() else None
     return {
         "id": row["id"],
         "name": row["name"],
+        "displayName": display_name or default_display_name(row["name"]),
         "folderId": row["folderId"],
         "url": row["url"],
         "size": row["size"],
@@ -287,13 +301,14 @@ def upload_model(
     folderId: str = Form("1"),
     thumbnail: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
+    displayName: Optional[str] = Form(None),
 ):
     mid = str(uuid.uuid4())
-    
+
     # Ensure that file.filename is a string before passing it to os.path.splitext, providing a default value if it is None
     filename_str = file.filename or ".stl"
     ext = os.path.splitext(filename_str)[1] or ".stl"
-    
+
     filename = f"{mid}{ext}"
     path = os.path.join(UPLOAD_DIR, filename)
     size = save_upload_file(file, path)
@@ -308,6 +323,7 @@ def upload_model(
     model = {
         "id": mid,
         "name": file.filename,
+        "displayName": (displayName or "").strip() or default_display_name(filename_str),
         "folderId": folderId if folderId != "all" else "1",
         "url": f"/api/models/{mid}/download",
         "size": size,
@@ -320,10 +336,11 @@ def upload_model(
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO models(id,name,displayName,folderId,url,size,dateAdded,tags,description,thumbnail) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
             model["id"],
             model["name"],
+            model["displayName"],
             model["folderId"],
             model["url"],
             model["size"],
@@ -348,7 +365,7 @@ def update_model(model_id: str, updates: dict):
         raise HTTPException(status_code=404, detail="Model not found")
 
     # Build update statement
-    allowed = ["name", "folderId", "tags", "description", "thumbnail"]
+    allowed = ["name", "displayName", "folderId", "tags", "description", "thumbnail"]
     fields = []
     values = []
     for k in allowed:
@@ -636,6 +653,7 @@ def import_model_by_id(payload: dict):
     model = {
         "id": mid,
         "name": modelName,
+        "displayName": modelName,
         "folderId": folderId if folderId != "all" else "1",
         "url": f"/api/models/{mid}/download",
         "size": size,
@@ -648,10 +666,11 @@ def import_model_by_id(payload: dict):
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO models(id,name,displayName,folderId,url,size,dateAdded,tags,description,thumbnail) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
             model["id"],
             model["name"],
+            model["displayName"],
             model["folderId"],
             model["url"],
             model["size"],

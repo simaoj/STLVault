@@ -113,6 +113,7 @@ const ModelList: React.FC<ModelListProps> = ({
       const query = searchQuery.toLowerCase();
       result = result.filter(
         (m) =>
+          m.displayName.toLowerCase().includes(query) ||
           m.name.toLowerCase().includes(query) ||
           m.tags.some((t) => t.toLowerCase().includes(query)),
       );
@@ -124,9 +125,9 @@ const ModelList: React.FC<ModelListProps> = ({
         case "date-asc":
           return a.dateAdded - b.dateAdded;
         case "name-asc":
-          return a.name.localeCompare(b.name);
+          return a.displayName.localeCompare(b.displayName);
         case "name-desc":
-          return b.name.localeCompare(a.name);
+          return b.displayName.localeCompare(a.displayName);
         case "size-desc":
           return b.size - a.size;
         case "size-asc":
@@ -602,13 +603,15 @@ const ModelList: React.FC<ModelListProps> = ({
                     draggable
                     onDragStart={(e) => handleCardDragStart(e, model.id)}
                     onClick={() => (selectionMode ? onToggleSelection(model.id) : onSelectModel(model))}
-                    className="group model-card bg-surface-container-low rounded-xl overflow-hidden border border-outline-variant transition-all hover:-translate-y-1 relative cursor-pointer active:cursor-grabbing"
+                    className={`group model-card bg-surface-container-low rounded-xl border border-outline-variant transition-all hover:-translate-y-1 relative cursor-pointer active:cursor-grabbing ${
+                      isMenuOpen ? "z-40" : ""
+                    }`}
                   >
-                    <div className="aspect-square relative overflow-hidden bg-surface-container-highest">
+                    <div className="aspect-square relative overflow-hidden rounded-t-xl bg-surface-container-highest">
                       {model.thumbnail ? (
                         <img
                           src={model.thumbnail}
-                          alt={model.name}
+                          alt={model.displayName}
                           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                         />
                       ) : (
@@ -636,7 +639,7 @@ const ModelList: React.FC<ModelListProps> = ({
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => {}}
-                          aria-label={`Select ${model.name}`}
+                          aria-label={`Select ${model.displayName}`}
                           className="w-4 h-4 rounded accent-primary cursor-pointer"
                         />
                       </div>
@@ -665,7 +668,7 @@ const ModelList: React.FC<ModelListProps> = ({
 
                     <div className="p-2.5">
                       <div className="flex items-start justify-between gap-1 mb-1">
-                        <h4 className="text-body-sm font-bold text-on-surface truncate flex-1">{model.name}</h4>
+                        <h4 className="text-body-sm font-bold text-on-surface truncate flex-1">{model.displayName}</h4>
                         <div className="relative shrink-0">
                           <button
                             onClick={(e) => {
@@ -776,18 +779,18 @@ const ModelList: React.FC<ModelListProps> = ({
                       checked={isSelected}
                       onClick={(e) => e.stopPropagation()}
                       onChange={() => onToggleSelection(model.id)}
-                      aria-label={`Select ${model.name}`}
+                      aria-label={`Select ${model.displayName}`}
                       className="w-5 h-5 rounded accent-primary cursor-pointer shrink-0"
                     />
                     <div className="w-12 h-12 rounded-lg overflow-hidden bg-surface-container-highest shrink-0 flex items-center justify-center">
                       {model.thumbnail ? (
-                        <img src={model.thumbnail} alt={model.name} className="w-full h-full object-cover" />
+                        <img src={model.thumbnail} alt={model.displayName} className="w-full h-full object-cover" />
                       ) : (
                         <Icon name="deployed_code" className="text-on-surface-variant/50" />
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-body-md font-bold text-on-surface truncate">{model.name}</p>
+                      <p className="text-body-md font-bold text-on-surface truncate">{model.displayName}</p>
                       <p className="text-label-sm font-label-sm text-on-surface-variant">
                         {formatSize(model.size)} • {formatRelativeTime(model.dateAdded)}
                       </p>

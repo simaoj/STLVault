@@ -20,6 +20,7 @@ export interface Folder {
 export interface STLModel {
   id: string;
   name: string;
+  displayName: string;
   folderId: string;
   url: string; // Blob URL
   size: number;

@@ -49,7 +49,7 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
 
   React.useEffect(() => {
     if (model) {
-      setEditName(model.name);
+      setEditName(model.displayName);
       setEditDesc(model.description || "");
       setEditTags(model.tags.join(", "));
       setIsEditing(false);
@@ -151,19 +151,15 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   };
 
   const handleSave = () => {
-    const currentExt = getExtension(model.name);
-    const editExt = getExtension(editName);
-    const newName = editExt !== currentExt ? `${editName}.${currentExt}` : editName;
-
     const newTags = editTags
       .split(",")
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
 
     if (tempThumb !== "") {
-      onUpdate(model.id, { name: newName, description: editDesc, tags: newTags, thumbnail: tempThumb });
+      onUpdate(model.id, { displayName: editName, description: editDesc, tags: newTags, thumbnail: tempThumb });
     } else {
-      onUpdate(model.id, { name: newName, description: editDesc, tags: newTags });
+      onUpdate(model.id, { displayName: editName, description: editDesc, tags: newTags });
     }
 
     setIsEditing(false);
@@ -222,14 +218,14 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                 className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
               />
             ) : (
-              <p className="text-body-md font-body-md text-on-surface-variant break-words">{model.name}</p>
+              <p className="text-body-md font-body-md text-on-surface-variant break-words">{model.displayName}</p>
             )}
           </div>
 
           <p className="text-body-sm font-body-sm text-on-surface-variant">
-            Filename:
+            Original file:
             <br />
-            {model.id}.{model.name.split(".").pop()}
+            {model.name}
           </p>
           <div className="h-px bg-outline-variant" />
 
