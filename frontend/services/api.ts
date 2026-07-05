@@ -155,11 +155,13 @@ export const api = {
     const slicerPreference =
       localStorage.getItem("stlvault-slicer") || "orcaslicer";
 
-    // Bambu Studio doesn't expose a working URL scheme for opening files from
-    // third-party hosts (bambu-connect:// is for print jobs, not file opens,
-    // and bambustudio://open?file= is blocked outside Bambu-owned domains).
-    // Fall back to a plain download; the OS file association opens it in Bambu Studio.
-    if (slicerPreference === "bambu") {
+    const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
+
+    // Bambu Studio only exposes a working URL scheme for opening files on
+    // macOS. On other platforms there's no reliable file-open scheme, so
+    // fall back to a plain download; the OS file association opens it in
+    // Bambu Studio.
+    if (slicerPreference === "bambu" && !isMac) {
       return modelURL;
     }
 
@@ -167,6 +169,7 @@ export const api = {
       orcaslicer: "orcaslicer://open?file=",
       prusaslicer: "prusaslicer://open?file=",
       cura: "cura://open?file=",
+      bambu: "bambustudioopen://open?path=",
     };
 
     const protocol =
